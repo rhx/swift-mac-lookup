@@ -125,7 +125,7 @@ public struct MACVendorInfo: Codable, Sendable {
     /// Indicates if the record is private.
     public let isPrivate: Bool
     
-    /// The raw data from the API response.
+    /// A dictionary containing all the raw data from the source.
     public let rawData: [String: String]
     
     private enum CodingKeys: String, CodingKey {
@@ -138,18 +138,76 @@ public struct MACVendorInfo: Codable, Sendable {
         case isPrivate = "private"
     }
     
+    // Helper to decode a value that might be a String or a Bool as a String
+    private static func decodeStringOrBool(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) throws -> String {
+        if let boolValue = try? container.decodeIfPresent(Bool.self, forKey: key) {
+            return boolValue ? "true" : "false"
+        }
+        return try container.decodeIfPresent(String.self, forKey: key) ?? ""
+    }
+    
     public init(from decoder: Decoder) throws {
+        // First decode all known fields
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Decode required fields
         prefix = try container.decode(String.self, forKey: .prefix)
         companyName = try container.decode(String.self, forKey: .companyName)
-        companyAddress = try container.decode(String.self, forKey: .companyAddress)
-        countryCode = try container.decode(String.self, forKey: .countryCode)
-        blockType = try container.decode(String.self, forKey: .blockType)
-        updated = try container.decode(String.self, forKey: .updated)
-        isPrivate = try container.decode(Bool.self, forKey: .isPrivate)
         
-        // Store raw data for any additional fields
-        rawData = try decoder.singleValueContainer().decode([String: String].self)
+        // Decode optional fields with defaults
+        companyAddress = try container.decodeIfPresent(String.self, forKey: .companyAddress) ?? ""
+        countryCode = try container.decodeIfPresent(String.self, forKey: .countryCode) ?? ""
+        blockType = try container.decodeIfPresent(String.self, forKey: .blockType) ?? ""
+        updated = try container.decodeIfPresent(String.self, forKey: .updated) ?? ""
+        
+        // Handle private field that might be a string or a boolean
+        if let boolValue = try? container.decodeIfPresent(Bool.self, forKey: .isPrivate) {
+            isPrivate = boolValue
+        } else if let stringValue = try? container.decodeIfPresent(String.self, forKey: .isPrivate) {
+            isPrivate = stringValue.lowercased() == "true"
+        } else {
+            isPrivate = false
+        }
+        
+        // Store all the raw data as strings
+        var rawData: [String: String] = [
+            "oui": prefix,
+            "company": companyName,
+            "address": companyAddress,
+            "country": countryCode,
+            "type": blockType,
+            "updated": updated,
+            "private": isPrivate ? "true" : "false"
+        ]
+        
+        // Try to decode any additional fields using a dynamic coding keys approach
+        do {
+            let dynamicContainer = try decoder.container(keyedBy: DynamicCodingKey.self)
+            for key in dynamicContainer.allKeys {
+                // Skip already processed keys
+                if CodingKeys(stringValue: key.stringValue) != nil {
+                    continue
+                }
+                
+                // Try to decode the value as a string, bool, number, or null
+                if let value = try? dynamicContainer.decodeIfPresent(String.self, forKey: key) {
+                    rawData[key.stringValue] = value
+                } else if let value = try? dynamicContainer.decodeIfPresent(Bool.self, forKey: key) {
+                    rawData[key.stringValue] = value ? "true" : "false"
+                } else if let value = try? dynamicContainer.decodeIfPresent(Int.self, forKey: key) {
+                    rawData[key.stringValue] = String(value)
+                } else if let value = try? dynamicContainer.decodeIfPresent(Double.self, forKey: key) {
+                    rawData[key.stringValue] = String(value)
+                } else if (try? dynamicContainer.decodeNil(forKey: key)) == true {
+                    rawData[key.stringValue] = "null"
+                }
+            }
+        } catch {
+            // Ignore errors in dynamic decoding - we already have the main fields
+            print("Warning: Failed to decode additional fields: \(error)")
+        }
+        
+        self.rawData = rawData
     }
     
     public func encode(to encoder: Encoder) throws {
@@ -161,6 +219,22 @@ public struct MACVendorInfo: Codable, Sendable {
         try container.encode(blockType, forKey: .blockType)
         try container.encode(updated, forKey: .updated)
         try container.encode(isPrivate, forKey: .isPrivate)
+    }
+    
+    // Helper struct for dynamic key decoding
+    private struct DynamicCodingKey: CodingKey {
+        var stringValue: String
+        var intValue: Int?
+        
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            self.intValue = nil
+        }
+        
+        init?(intValue: Int) {
+            self.stringValue = String(intValue)
+            self.intValue = intValue
+        }
     }
 }
 
@@ -202,16 +276,19 @@ public enum MACLookupError: Error, LocalizedError, Sendable {
     }
 }
 
-/// A type that provides functionality to look up MAC address vendor information.
 @available(macOS 12.0, iOS 15.0, watchOS 8.0, tvOS 15.0, *)
 public actor MACLookup {
-    /// The shared singleton instance.
-    public static let shared = MACLookup()
-    
-    private let localDatabaseURL: URL
-    private let configURL: URL
-    private var localDatabase: [String: MACVendorInfo] = [:]
+    /// The URL session to use for network requests.
     private let session: URLSession
+    
+    /// The URL of the local database file.
+    private let localDatabaseURL: URL
+    
+    /// The URL of the configuration file.
+    private let configURL: URL
+    
+    /// The in-memory cache of MAC address to vendor information.
+    private var localDatabase: [String: MACVendorInfo] = [:]
     private var apiKey: String?
     private let decoder = JSONDecoder()
     
@@ -220,9 +297,10 @@ public actor MACLookup {
     
     /// Creates a new MACLookup instance with the specified database and configuration URLs.
     /// - Parameters:
-    ///   - localDatabaseURL: The URL of the local database file. Defaults to "macaddress-db.json" in the application support directory.
-    ///   - configURL: The URL of the configuration file. Defaults to "config.yaml" in the application support directory.
-    public init(localDatabaseURL: URL? = nil, configURL: URL? = nil) {
+    ///   - localDatabaseURL: The URL of the local database file. Defaults to a file named "macaddress-db.json" in the user's application support directory.
+    ///   - configURL: The URL of the configuration file. Defaults to a file named "config.yaml" in the user's application support directory.
+    ///   - session: The URLSession to use for network requests. Defaults to a new URLSession with default configuration.
+    public init(localDatabaseURL: URL? = nil, configURL: URL? = nil, session: URLSession? = nil) {
         let fileManager = FileManager.default
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let bundleID = Bundle.main.bundleIdentifier ?? "com.maclookup"
@@ -234,10 +312,15 @@ public actor MACLookup {
         self.localDatabaseURL = localDatabaseURL ?? appSupportDir.appendingPathComponent("macaddress-db.json")
         self.configURL = configURL ?? appSupportDir.appendingPathComponent("config.yaml")
         
-        let config = URLSessionConfiguration.default
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.urlCache = nil
-        self.session = URLSession(configuration: config)
+        // Use the provided session or create a new one
+        if let session = session {
+            self.session = session
+        } else {
+            let config = URLSessionConfiguration.default
+            config.requestCachePolicy = .reloadIgnoringLocalCacheData
+            config.urlCache = nil
+            self.session = URLSession(configuration: config)
+        }
     }
     
     /// Loads the local database into memory.

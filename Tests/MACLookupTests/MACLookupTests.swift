@@ -1,6 +1,42 @@
 import Testing
 import Foundation
+import XCTest
 @testable import MACLookup
+
+// MARK: - Test Configuration
+
+private let testConfig = """
+{
+    "maclookup_app": "test-api-key"
+}
+"""
+
+private let testDatabase = """
+{
+    "00:11:22": {
+        "oui": "00:11:22",
+        "company": "Test Company",
+        "address": "123 Test St",
+        "country": "AU",
+        "type": "MA-L",
+        "updated": "2023-01-01",
+        "private": false
+    }
+}
+"""
+
+private let testAPIResponse = """
+{
+    "oui": "00:11:22",
+    "company": "Test Company",
+    "address": "123 Test St",
+    "country": "AU",
+    "type": "MA-L",
+    "updated": "2023-01-01",
+    "private": false
+}
+"""
+
 
 @Suite("MACAddress Tests")
 struct MACAddressTests {
@@ -90,55 +126,88 @@ struct MACLookupTests {
     
     @Test("Database loading and updating")
     func testDatabaseOperations() async throws {
-        // Create a test database
-        let testData = """
-        {
-            "00:11:22": {
-                "oui": "00:11:22",
-                "company": "Test Company",
-                "address": "123 Test St",
-                "country": "AU",
-                "type": "MA-L",
-                "updated": "2023-01-01",
-                "private": false
-            }
-        }
-        """
+        // Setup mock URL session
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let mockSession = URLSession(configuration: config)
         
-        try testData.write(to: testDBURL, atomically: true, encoding: .utf8)
+        // Create test files
+        try testConfig.write(to: testConfigURL, atomically: true, encoding: .utf8)
+        try testDatabase.write(to: testDBURL, atomically: true, encoding: .utf8)
+        
+        // Set up mock response for API calls
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, testAPIResponse.data(using: .utf8)!)
+        }
         
         let lookup = MACLookup(
             localDatabaseURL: testDBURL,
-            configURL: testConfigURL
+            configURL: testConfigURL,
+            session: mockSession
         )
         
         // Test loading the database
-        try lookup.loadLocalDatabase()
+        try await lookup.loadLocalDatabase()
         
-        // Test looking up a MAC address
-        let vendor = try await lookup.lookup("00:11:22:33:44:55")
-        #expect(vendor.companyName == "Test Company")
+        // Test looking up a MAC address from local database
+        let localVendor = try await lookup.lookup("00:11:22:33:44:55")
+        #expect(localVendor.companyName == "Test Company")
         
-        // Test non-existent MAC address
+        // Test non-existent MAC address with API failure
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 404,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data())
+        }
+        
         do {
             _ = try await lookup.lookup("FF:FF:FF:00:00:00")
-            Issue.record("Expected MACLookupError.notFound to be thrown")
-        } catch MACLookupError.notFound {
+            Issue.record("Expected MACLookupError.apiError to be thrown")
+        } catch MACLookupError.apiError {
             // Expected error - test passes
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+        
+        // Reset the request handler
+        MockURLProtocol.reset()
     }
     
     @Test("Configuration handling")
     func testConfiguration() async throws {
-        // Create a test config file with JSON instead of YAML for simplicity
-        let config = "maclookup_app: test-api-key"
-        try config.write(to: testConfigURL, atomically: true, encoding: .utf8)
+        // Create a test config file
+        try testConfig.write(to: testConfigURL, atomically: true, encoding: .utf8)
         
-        _ = MACLookup(
+        // Setup mock URL session
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let mockSession = URLSession(configuration: config)
+        
+        // Set up mock response for API key validation
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (response, Data())
+        }
+        
+        let lookup = MACLookup(
             localDatabaseURL: testDBURL,
-            configURL: testConfigURL
+            configURL: testConfigURL,
+            session: mockSession
         )
         
         // Verify the config file exists and has content
@@ -150,6 +219,9 @@ struct MACLookupTests {
             let content = try String(contentsOf: testConfigURL, encoding: .utf8)
             #expect(content.contains("test-api-key"))
         }
+        
+        // Reset the request handler
+        MockURLProtocol.reset()
     }
     
     // MARK: - Test Lifecycle
