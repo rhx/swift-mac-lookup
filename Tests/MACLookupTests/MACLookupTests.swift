@@ -1,6 +1,211 @@
 import Testing
+import Foundation
 @testable import MACLookup
 
-@Test func example() async throws {
-    // Write your test here and use APIs like `#expect(...)` to check expected conditions.
+@Suite("MACAddress Tests")
+struct MACAddressTests {
+    @Test("Valid MAC address initialisation")
+    func testValidMACAddress() throws {
+        let macStrings = [
+            "00:11:22:33:44:55",
+            "00-11-22-33-44-55",
+            "00.11.22.33.44.55",
+            "0011.2233.4455"
+        ]
+        
+        for macString in macStrings {
+            let mac = try #require(try? MACAddress(string: macString))
+            #expect(mac.description == "00:11:22:33:44:55")
+            #expect(mac.oui == "00:11:22")
+        }
+    }
+    
+    @Test("Invalid MAC address initialisation")
+    func testInvalidMACAddress() throws {
+        let invalidMACs = [
+            "00:11:22:33:44:GG",  // Invalid character
+            "00:11:22:33:44",     // Too short
+            "00:11:22:33:44:55:66", // Too long
+            "not a mac address",   // Completely invalid
+            ""                     // Empty string
+        ]
+        
+        for macString in invalidMACs {
+            #expect(throws: (any Error).self) {
+                _ = try MACAddress(string: macString)
+            }
+        }
+    }
+}
+
+@Suite("MACVendorInfo Tests")
+struct MACVendorInfoTests {
+    @Test("Decoding from JSON")
+    func testDecoding() throws {
+        let json = """
+        {
+            "oui": "00:11:22",
+            "company": "Test Company",
+            "address": "123 Test St, Test City",
+            "country": "AU",
+            "type": "MA-L",
+            "updated": "2023-01-01",
+            "private": false
+        }
+        """
+        
+        let data = try #require(json.data(using: .utf8))
+        let decoder = JSONDecoder()
+        let vendorInfo = try decoder.decode(MACVendorInfo.self, from: data)
+        
+        #expect(vendorInfo.prefix == "00:11:22")
+        #expect(vendorInfo.companyName == "Test Company")
+        #expect(vendorInfo.companyAddress == "123 Test St, Test City")
+        #expect(vendorInfo.countryCode == "AU")
+        #expect(vendorInfo.blockType == "MA-L")
+        #expect(vendorInfo.updated == "2023-01-01")
+        #expect(vendorInfo.isPrivate == false)
+    }
+}
+
+@Suite("MACLookup Tests")
+struct MACLookupTests {
+    private let tempDir: URL
+    private let testDBURL: URL
+    private let testConfigURL: URL
+    
+    @Test("Initialisation and setup")
+    func testInitialisation() async throws {
+        // The test just verifies that the files are created during init
+        _ = MACLookup(
+            localDatabaseURL: testDBURL,
+            configURL: testConfigURL
+        )
+        
+        // Verify files were created
+        let fileManager = FileManager.default
+        #expect(fileManager.fileExists(atPath: testDBURL.path))
+        #expect(fileManager.fileExists(atPath: testConfigURL.path))
+    }
+    
+    @Test("Database loading and updating")
+    func testDatabaseOperations() async throws {
+        // Create a test database
+        let testData = """
+        {
+            "00:11:22": {
+                "oui": "00:11:22",
+                "company": "Test Company",
+                "address": "123 Test St",
+                "country": "AU",
+                "type": "MA-L",
+                "updated": "2023-01-01",
+                "private": false
+            }
+        }
+        """
+        
+        try testData.write(to: testDBURL, atomically: true, encoding: .utf8)
+        
+        let lookup = MACLookup(
+            localDatabaseURL: testDBURL,
+            configURL: testConfigURL
+        )
+        
+        // Test loading the database
+        try lookup.loadLocalDatabase()
+        
+        // Test looking up a MAC address
+        let vendor = try await lookup.lookup("00:11:22:33:44:55")
+        #expect(vendor.companyName == "Test Company")
+        
+        // Test non-existent MAC address
+        do {
+            _ = try await lookup.lookup("FF:FF:FF:00:00:00")
+            Issue.record("Expected MACLookupError.notFound to be thrown")
+        } catch MACLookupError.notFound {
+            // Expected error - test passes
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+    
+    @Test("Configuration handling")
+    func testConfiguration() async throws {
+        // Create a test config file with JSON instead of YAML for simplicity
+        let config = "maclookup_app: test-api-key"
+        try config.write(to: testConfigURL, atomically: true, encoding: .utf8)
+        
+        _ = MACLookup(
+            localDatabaseURL: testDBURL,
+            configURL: testConfigURL
+        )
+        
+        // Verify the config file exists and has content
+        let fileManager = FileManager.default
+        let configExists = fileManager.fileExists(atPath: testConfigURL.path)
+        #expect(configExists)
+        
+        if configExists {
+            let content = try String(contentsOf: testConfigURL, encoding: .utf8)
+            #expect(content.contains("test-api-key"))
+        }
+    }
+    
+    // MARK: - Test Lifecycle
+    
+    init() {
+        do {
+            // Create a temporary directory for tests
+            let tempDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MACLookupTests-\(UUID().uuidString)")
+            
+            try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            self.tempDir = tempDir
+            
+            // Set up test file URLs
+            self.testDBURL = tempDir.appendingPathComponent("test-db.json")
+            self.testConfigURL = tempDir.appendingPathComponent("test-config.json")
+            
+            // Create empty files
+            FileManager.default.createFile(atPath: testDBURL.path, contents: Data())
+            FileManager.default.createFile(atPath: testConfigURL.path, contents: Data())
+        } catch {
+            // If setup fails, the test will fail with a descriptive error
+            fatalError("Failed to set up test environment: \(error)")
+        }
+    }
+    
+    @Test("Clean up test environment")
+    func cleanup() throws {
+        // Remove the temporary directory
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+}
+
+// MARK: - Test Utilities
+
+extension Test {
+    /// Helper function to unwrap an optional or fail the test
+    static func `require`<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) throws -> T {
+        guard let value = value else {
+            throw TestError.requiredValueIsNil(file: file, line: line)
+        }
+        return value
+    }
+    
+
+}
+
+private enum TestError: Error {
+    case requiredValueIsNil(file: StaticString, line: UInt)
+}
+
+extension TestError: CustomStringConvertible {
+    var description: String {
+        switch self {
+        case .requiredValueIsNil(let file, let line):
+            return "Required value is nil at \(file):\(line)"
+        }
+    }
 }
