@@ -104,6 +104,7 @@ struct MACVendorInfoTests {
 
 @Suite("MACLookup Tests")
 struct MACLookupTests {
+    static let testURL = Bundle.module.url(forResource: "testoui", withExtension: "txt")
     private let tempDir: URL
     private let testDBURL: URL
     private let testConfigURL: URL
@@ -112,10 +113,9 @@ struct MACLookupTests {
     @Test("Initialisation and setup")
     func testInitialisation() async throws {
         // The test just verifies that the files are created during init
-        _ = MACLookup(
-            localDatabaseURL: testDBURL,
-            configURL: testConfigURL
-        )
+        let lookup = MACLookup(localDatabaseURL: testDBURL, onlineURL: Self.testURL ?? ieeeOUIURL)
+        let lastUpdated = await lookup.lastUpdated
+        #expect(lastUpdated == nil)
         
         // Verify files were created
         let fileManager = FileManager.default
@@ -125,29 +125,15 @@ struct MACLookupTests {
     
     @Test("Test resources can be loaded")
     func testResourcesLoad() throws {
-        // Try to load the test resource
-        let testBundle = Bundle.module
-        let resourceURL = testBundle.url(forResource: "testoui", withExtension: "txt")
-        
-        if let resourceURL = resourceURL {
-            // Try to read the file
-            do {
+        #expect(Self.testURL != nil)
+        guard let resourceURL = Self.testURL else { return }
+        do {
                 let content = try String(contentsOf: resourceURL, encoding: .utf8)
                 if content.isEmpty {
                     print("Warning: Test resource 'testoui.txt' is empty")
                 }
             } catch {
                 print("Warning: Could not read test resource: \(error)")
-            }
-        } else {
-            // If we can't find the resource, log where we looked
-            print("Warning: Test resource 'testoui.txt' not found in bundle")
-            if let resourcePath = testBundle.resourcePath {
-                print("Resource path: \(resourcePath)")
-                if let contents = try? FileManager.default.contentsOfDirectory(atPath: resourcePath) {
-                    print("Contents of resource directory: \(contents)")
-                }
-            }
         }
     }
     
@@ -172,12 +158,12 @@ struct MACLookupTests {
             // Return a valid OUI text file in the format expected by OUIParser
             // The parser will include everything after the OUI in the vendor name
             let ouiText = """
-            00-11-22     (hex)		CIMSYS Inc
-                CIMSYS Inc
-                Yongin-City  Kyunggi-Do  449-711
-                KR
+            33-11-22     (hex)		Some Inc
+                Some Inc
+                Some City  Some State  123-456
+                AU
             
-            00-11-23     (hex)		Another Company
+            44-11-23     (hex)		Another Company
                 Another Address Line 1
                 Another City, Another State 67890
                 US
@@ -190,10 +176,7 @@ struct MACLookupTests {
         }
         
         // Initialize MACLookup with our test path
-        let lookup = MACLookup(
-            localDatabaseURL: testDBPath,
-            configURL: tempDir.appendingPathComponent("config.yaml")
-        )
+        let lookup = MACLookup(localDatabaseURL: testDBPath, onlineURL: Self.testURL!)
         
         // Test updating the database first to populate it with mock data
         try await lookup.updateDatabase()
@@ -203,7 +186,7 @@ struct MACLookupTests {
         
         // The OUIParser includes everything after the OUI in the vendor name
         // The MACVendorInfo.from(vendorName:) method uses this as the company name
-        let expectedVendorName = "(hex) CIMSYS Inc 001122     (base 16)\t\tCIMSYS Inc Yongin-City  Kyunggi-Do  449-711 KR"
+        let expectedVendorName = "(hex) First"
         #expect(localVendor.companyName == expectedVendorName)
         #expect(localVendor.companyAddress.isEmpty) // Address is empty in MACVendorInfo.from(vendorName:)
         #expect(localVendor.countryCode.isEmpty) // Country code is empty in MACVendorInfo.from(vendorName:)
@@ -245,11 +228,7 @@ struct MACLookupTests {
         }
         
         // Initialize MACLookup with our test paths
-        let lookup = MACLookup(
-            localDatabaseURL: testDBURL,
-            configURL: tempDir.appendingPathComponent("config.yaml"),
-            session: MockURLProtocol.createMockURLSession()
-        )
+        let lookup = MACLookup(localDatabaseURL: testDBURL, session: MockURLProtocol.createMockURLSession())
         
         // Test that the database was loaded
         try await lookup.loadLocalDatabase()
