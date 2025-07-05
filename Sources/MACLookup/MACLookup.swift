@@ -67,7 +67,10 @@ public struct MACAddress: Hashable, Codable, CustomStringConvertible, Sendable {
     }
 
     /// The first three bytes of the MAC address, known as the OUI (Organizationally Unique Identifier).
-    public var oui: String { String(description.prefix(8)) }
+    /// Returns the OUI in the format "001122" (without colons).
+    public var oui: String {
+        String(format: "%02X%02X%02X", bytes.0, bytes.1, bytes.2)
+    }
 
     /// Creates a MAC address from a string representation.
     /// - Parameter string: A string containing a MAC address in common formats (e.g., "00:11:22:33:44:55" or "00-11-22-33-44-55").
@@ -335,10 +338,12 @@ public actor MACLookup {
 
     /// The URL of the configuration file.
     private let configURL: URL
+    
+    /// The URL of the online OUI database.
+    private let onlineURL: URL
 
     /// The in-memory cache of MAC address to vendor information.
     private var localDatabase: [String: MACVendorInfo] = [:]
-    private var apiKey: String?
     private let decoder = JSONDecoder()
 
     /// The date when the local database was last updated.
@@ -348,8 +353,14 @@ public actor MACLookup {
     /// - Parameters:
     ///   - localDatabaseURL: The URL of the local database file. Defaults to a file named "macaddress-db.json" in the user's application support directory.
     ///   - configURL: The URL of the configuration file. Defaults to a file named "config.yaml" in the user's application support directory.
+    ///   - onlineURL: The URL of the online OUI database. Defaults to the official IEEE OUI text file URL.
     ///   - session: The URLSession to use for network requests. Defaults to a new URLSession with default configuration.
-    public init(localDatabaseURL: URL? = nil, configURL: URL? = nil, session: URLSession? = nil) {
+    public init(
+        localDatabaseURL: URL? = nil,
+        configURL: URL? = nil,
+        onlineURL: URL = ieeeOUIURL,
+        session: URLSession? = nil
+    ) {
         let fileManager = FileManager.default
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let bundleID = Bundle.main.bundleIdentifier ?? "com.maclookup"
@@ -360,6 +371,7 @@ public actor MACLookup {
 
         self.localDatabaseURL = localDatabaseURL ?? appSupportDir.appendingPathComponent("macaddress-db.json")
         self.configURL = configURL ?? appSupportDir.appendingPathComponent("config.yaml")
+        self.onlineURL = onlineURL
 
         // Use the provided session or create a new one
         if let session = session {
@@ -372,7 +384,8 @@ public actor MACLookup {
         }
     }
 
-    /// Loads the local database into memory.
+    /// Loads the local database from disk.
+    ///
     /// - Throws: `MACLookupError.databaseError` if the database cannot be loaded.
     public func loadLocalDatabase() throws {
         let data = try Data(contentsOf: localDatabaseURL)
@@ -383,28 +396,106 @@ public actor MACLookup {
         let attributes = try FileManager.default.attributesOfItem(atPath: localDatabaseURL.path)
         self.lastUpdated = attributes[.modificationDate] as? Date
     }
-
-    /// Looks up vendor information for a MAC address.
-    /// - Parameter macAddress: The MAC address to look up, either as a string or a `MACAddress` instance.
-    /// - Returns: A `MACVendorInfo` instance containing the vendor information.
-    /// - Throws: `MACLookupError` if the lookup fails for any reason.
-    public func lookup(_ macAddress: String) async throws -> MACVendorInfo {
+    
+    /// Saves the local database to disk.
+    /// - Throws: `MACLookupError.databaseError` if the database cannot be saved.
+    public func saveLocalDatabase() async throws {
+        let data = try JSONEncoder().encode(localDatabase)
+        
+        // Perform file I/O in a detached task
+        try await Task.detached {
+            try data.write(to: self.localDatabaseURL, options: [.atomic])
+        }.value
+        
+        // Update the last modified date in the actor's context
+        self.lastUpdated = Date()
+    }
+    
+    /// Looks up vendor information for a MAC address in the local database only.
+    /// - Parameter macAddress: The MAC address to look up.
+    /// - Returns: The vendor information if found.
+    /// - Throws: `MACLookupError.invalidMACAddress` if the MAC address is invalid.
+    /// - Throws: `MACLookupError.notFound` if no vendor information is found in the local database.
+    public func lookupLocal(_ macAddress: String) throws -> MACVendorInfo {
         let address = try MACAddress(string: macAddress)
-        return try await lookup(address)
+        guard let vendorInfo = localDatabase[address.oui] else {
+            throw MACLookupError.notFound("No vendor found for MAC address: \(macAddress)")
+        }
+        return vendorInfo
+    }
+    
+    /// Internal helper to get vendor info from local database without throwing
+    private func getLocalVendorInfo(for address: MACAddress) -> MACVendorInfo? {
+        return localDatabase[address.oui]
     }
 
-    /// Looks up vendor information for a MAC address.
-    /// - Parameter macAddress: The MAC address to look up.
-    /// - Returns: A `MACVendorInfo` instance containing the vendor information.
-    /// - Throws: `MACLookupError` if the lookup fails for any reason.
-    public func lookup(_ macAddress: MACAddress) async throws -> MACVendorInfo {
-        // First try local database
-        if let vendor = localDatabase[macAddress.oui] {
-            return vendor
+    /// Looks up vendor information for a MAC address by downloading from the online database.
+    /// - Parameters:
+    ///   - macAddress: The MAC address to look up.
+    ///   - updateLocal: Whether to update the local database with the results. Defaults to `true`.
+    /// - Returns: The vendor information if found.
+    /// - Throws: Errors related to network operations or parsing.
+    public func lookupOnline(_ macAddress: String, updateLocal: Bool = true) async throws -> MACVendorInfo {
+        let address = try MACAddress(string: macAddress)
+        
+        // Download and parse the OUI database
+        let (data, _) = try await session.data(from: onlineURL)
+        
+        // Parse the OUI database
+        let ouiDictionary = try OUIParser.parse(data)
+        
+        // Look up the vendor info for the OUI
+        let oui = address.oui.prefix(6).uppercased() // Use first 6 characters of OUI
+        guard let vendorName = ouiDictionary[String(oui)] else {
+            throw MACLookupError.notFound("No vendor found for MAC address: \(macAddress)")
         }
-
-        // If not found locally, try the online API
-        return try await lookupOnline(macAddress)
+        
+        // Create a MACVendorInfo instance from the vendor name
+        let vendorInfo = MACVendorInfo.from(vendorName: vendorName)
+        
+        // Update local database if requested
+        if updateLocal {
+            localDatabase[String(oui)] = vendorInfo
+            try await saveLocalDatabase()
+        }
+        
+        return vendorInfo
+    }
+    
+    /// Looks up vendor information for a MAC address, first checking the local database
+    /// and then falling back to the online database if not found.
+    /// - Parameter macAddress: The MAC address to look up.
+    /// - Returns: The vendor information if found.
+    /// - Throws: `MACLookupError` if the lookup fails.
+    public func lookup(_ macAddress: String) async throws -> MACVendorInfo {
+        do {
+            return try lookupLocal(macAddress)
+        } catch MACLookupError.notFound {
+            return try await lookupOnline(macAddress)
+        } catch {
+            throw error
+        }
+    }
+    
+    /// Looks up the vendor information for a MAC address.
+    /// - Parameter macAddress: The MAC address to look up.
+    /// - Returns: The vendor information if found.
+    /// - Throws: `MACLookupError` if the lookup fails.
+    public func lookup(_ macAddress: MACAddress) async throws -> MACVendorInfo {
+        // First try local lookup
+        if let vendorInfo = getLocalVendorInfo(for: macAddress) {
+            return vendorInfo
+        }
+        
+        // If not found locally, try online lookup
+        do {
+            return try await lookupOnline(macAddress.description)
+        } catch MACLookupError.notFound {
+            // Re-throw with a more specific error message
+            throw MACLookupError.notFound("No vendor found for MAC address: \(macAddress)")
+        } catch {
+            throw error
+        }
     }
 
     /// Update local database.
@@ -434,7 +525,7 @@ public actor MACLookup {
 
                 continuation.resume(returning: data)
             }
-            task.resume()
+            @discardableResult let _ = task.resume()
         }
 
         // Parse the OUI data

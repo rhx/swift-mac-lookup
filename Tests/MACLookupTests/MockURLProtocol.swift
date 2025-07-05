@@ -51,8 +51,14 @@ final class MockURLProtocol: URLProtocol {
     
     /// Resets the request handler.
     static func reset() {
-        queue.async(flags: .barrier) {
-            _requestHandler = nil
-        }
+        requestHandler = nil
+    }
+    
+    /// Creates a URLSession with this protocol as its URL protocol class.
+    /// - Returns: A configured URLSession instance.
+    static func createMockURLSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return URLSession(configuration: config)
     }
 }
