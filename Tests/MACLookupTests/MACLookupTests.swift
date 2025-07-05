@@ -1,7 +1,11 @@
 import Testing
 import Foundation
-import XCTest
+import class Foundation.Bundle
 @testable import MACLookup
+
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 // MARK: - Test Configuration
 
@@ -109,6 +113,7 @@ struct MACLookupTests {
     private let tempDir: URL
     private let testDBURL: URL
     private let testConfigURL: URL
+    private var testResourcesURL: URL
     
     @Test("Initialisation and setup")
     func testInitialisation() async throws {
@@ -124,8 +129,18 @@ struct MACLookupTests {
         #expect(fileManager.fileExists(atPath: testConfigURL.path))
     }
     
-    @Test("Database loading and updating")
-    func testDatabaseOperations() async throws {
+    @Test("Test resources can be loaded") func testResourcesLoad() throws {
+        // Use Bundle.module to get URL for resource "testoui.txt"
+        let resourceURL = Bundle.module.url(forResource: "testoui", withExtension: "txt")
+        #expect(resourceURL != nil, "testoui.txt not found in bundle resources")
+        
+        if let url = resourceURL {
+            let content = try String(contentsOf: url, encoding: .utf8)
+            #expect(!content.isEmpty, "testoui.txt is empty")
+        }
+    }
+    
+    @Test("Database loading and updating") func testDatabaseLoading() async throws {
         // Setup mock URL session
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
@@ -171,6 +186,10 @@ struct MACLookupTests {
         }
         
         do {
+            let resourceURL = Bundle.module.url(forResource: "testoui", withExtension: "txt")
+            #expect(resourceURL != nil, "testoui.txt not found in bundle resources")
+            guard let resourceURL else { return }
+            try await lookup.updateDatabase(from: resourceURL)
             _ = try await lookup.lookup("FF:FF:FF:00:00:00")
             Issue.record("Expected MACLookupError.apiError to be thrown")
         } catch MACLookupError.apiError {
@@ -218,6 +237,16 @@ struct MACLookupTests {
         if configExists {
             let content = try String(contentsOf: testConfigURL, encoding: .utf8)
             #expect(content.contains("test-api-key"))
+            
+            // Use the lookup instance to verify it works
+            let testMAC = "00:11:22:33:44:55"
+            do {
+                _ = try await lookup.lookup(testMAC)
+                // If we get here, the lookup worked
+            } catch {
+                // We expect an error since we're using a mock session
+                #expect(error is MACLookupError)
+            }
         }
         
         // Reset the request handler
@@ -231,23 +260,50 @@ struct MACLookupTests {
             // Create a temporary directory for tests
             let tempDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("MACLookupTests-\(UUID().uuidString)")
-            
             try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
             self.tempDir = tempDir
-            
-            // Set up test file URLs
-            self.testDBURL = tempDir.appendingPathComponent("test-db.json")
-            self.testConfigURL = tempDir.appendingPathComponent("test-config.json")
-            
+
+            // Create test database and config files
+            testDBURL = tempDir.appendingPathComponent("test_db.json")
+            testConfigURL = tempDir.appendingPathComponent("test_config.txt")
+
+            // Set up test resources path
+            // Try different possible locations for the resources
+            let testBundle = Bundle(for: MockURLProtocol.self)
+            let possibleResourceDirs = [
+                testBundle.resourceURL,
+                testBundle.resourceURL?.appendingPathComponent("Resources"),
+                testBundle.bundleURL.appendingPathComponent("Resources"),
+                testBundle.bundleURL.deletingLastPathComponent().appendingPathComponent("Resources"),
+                testBundle.bundleURL.appendingPathComponent("MACLookupTests/Resources")
+            ].compactMap { $0 }
+
+            // Find the first valid resources directory
+            var foundResourcesURL: URL?
+            for url in possibleResourceDirs {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                   isDirectory.boolValue {
+                    foundResourcesURL = url
+                    break
+                }
+            }
+
+            guard let resourcesURL = foundResourcesURL else {
+                fatalError("Could not find test resources directory. Tried:\n" + 
+                         possibleResourceDirs.map { "- \($0.path)" }.joined(separator: "\n"))
+            }
+
+            testResourcesURL = resourcesURL
+
             // Create empty files
             FileManager.default.createFile(atPath: testDBURL.path, contents: Data())
-            FileManager.default.createFile(atPath: testConfigURL.path, contents: Data())
+            FileManager.default.createFile(atPath: testConfigURL.path, contents: testConfig.data(using: .utf8))
         } catch {
-            // If setup fails, the test will fail with a descriptive error
             fatalError("Failed to set up test environment: \(error)")
         }
     }
-    
+
     @Test("Clean up test environment")
     func cleanup() throws {
         // Remove the temporary directory
@@ -281,3 +337,4 @@ extension TestError: CustomStringConvertible {
         }
     }
 }
+
