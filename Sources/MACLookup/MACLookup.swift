@@ -336,9 +336,6 @@ public actor MACLookup {
     /// The URL of the local database file.
     private let localDatabaseURL: URL
 
-    /// The URL of the configuration file.
-    private let configURL: URL
-    
     /// The URL of the online OUI database.
     private let onlineURL: URL
 
@@ -352,12 +349,10 @@ public actor MACLookup {
     /// Creates a new MACLookup instance with the specified database and configuration URLs.
     /// - Parameters:
     ///   - localDatabaseURL: The URL of the local database file. Defaults to a file named "macaddress-db.json" in the user's application support directory.
-    ///   - configURL: The URL of the configuration file. Defaults to a file named "config.yaml" in the user's application support directory.
     ///   - onlineURL: The URL of the online OUI database. Defaults to the official IEEE OUI text file URL.
     ///   - session: The URLSession to use for network requests. Defaults to a new URLSession with default configuration.
     public init(
         localDatabaseURL: URL? = nil,
-        configURL: URL? = nil,
         onlineURL: URL = ieeeOUIURL,
         session: URLSession? = nil
     ) {
@@ -370,7 +365,6 @@ public actor MACLookup {
         try? fileManager.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 
         self.localDatabaseURL = localDatabaseURL ?? appSupportDir.appendingPathComponent("macaddress-db.json")
-        self.configURL = configURL ?? appSupportDir.appendingPathComponent("config.yaml")
         self.onlineURL = onlineURL
 
         // Use the provided session or create a new one
@@ -506,26 +500,32 @@ public actor MACLookup {
     /// - Parameter url: The URL of the online source to update from.
     ///
     /// - Throws: `MACLookupError` if the update fails for any reason.
-    public func updateDatabase(from url: URL = ieeeOUIURL) async throws {
-        let data: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let task = session.dataTask(with: url) { data, response, error in
-                if let error = error {
-                    continuation.resume(throwing: MACLookupError.networkError(error))
-                    return
+    public func updateDatabase(from onlineURL: URL? = nil) async throws {
+        let url = onlineURL ?? self.onlineURL
+        let data: Data
+        if url.isFileURL {
+            data = try Data(contentsOf: url)
+        } else {
+            data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                let task = session.dataTask(with: url) { data, response, error in
+                    if let error = error {
+                        continuation.resume(throwing: MACLookupError.networkError(error))
+                        return
+                    }
+                    
+                    guard let httpResponse = response as? HTTPURLResponse,
+                          (200...299).contains(httpResponse.statusCode),
+                          let data = data else {
+                        continuation.resume(throwing: MACLookupError.networkError(
+                            NSError(domain: NSURLErrorDomain, code: NSURLErrorBadServerResponse, userInfo: nil)
+                        ))
+                        return
+                    }
+                    
+                    continuation.resume(returning: data)
                 }
-
-                guard let httpResponse = response as? HTTPURLResponse,
-                      (200...299).contains(httpResponse.statusCode),
-                      let data = data else {
-                    continuation.resume(throwing: MACLookupError.networkError(
-                        NSError(domain: NSURLErrorDomain, code: NSURLErrorBadServerResponse, userInfo: nil)
-                    ))
-                    return
-                }
-
-                continuation.resume(returning: data)
+                @discardableResult let _ = task.resume()
             }
-            @discardableResult let _ = task.resume()
         }
 
         // Parse the OUI data
@@ -553,7 +553,9 @@ public actor MACLookup {
     ///     - macAddress: The MAC address to look up.
     ///     - url: The URL of the online source to look up from. Defaults to the IEEE OUI URL.
     /// - Returns: A `MACVendorInfo` instance containing the vendor information.
-    public func lookupOnline(_ macAddress: MACAddress, at url: URL = ieeeOUIURL) async throws -> MACVendorInfo {
+    public func lookupOnline(_ macAddress: MACAddress, at onlineURL: URL? = nil) async throws -> MACVendorInfo {
+        let url = onlineURL ?? self.onlineURL
+
         // Download the latest OUI data and perform the lookup
         let oui = macAddress.oui
 
@@ -563,7 +565,7 @@ public actor MACLookup {
         }
 
         // If not found, try to update the database
-        try await updateDatabase()
+        try await updateDatabase(from: url)
 
         // Try again after update
         if let vendor = localDatabase[oui] {
