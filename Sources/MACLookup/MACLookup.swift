@@ -128,6 +128,49 @@ public struct MACVendorInfo: Codable, Sendable {
     /// A dictionary containing all the raw data from the source.
     public let rawData: [String: String]
     
+    /// Creates a new MACVendorInfo instance with the specified values.
+    /// - Parameters:
+    ///   - prefix: The MAC address prefix (OUI).
+    ///   - companyName: The name of the company.
+    ///   - companyAddress: The company's address. Defaults to an empty string.
+    ///   - countryCode: The country code. Defaults to an empty string.
+    ///   - blockType: The block type (e.g., "MA-L"). Defaults to "MA-L".
+    ///   - updated: The last updated timestamp. Defaults to an empty string.
+    ///   - isPrivate: Whether the record is private. Defaults to false.
+    ///   - rawData: Additional raw data. If nil, it will be generated from the other parameters.
+    public init(
+        prefix: String,
+        companyName: String,
+        companyAddress: String = "",
+        countryCode: String = "",
+        blockType: String = "MA-L",
+        updated: String = "",
+        isPrivate: Bool = false,
+        rawData: [String: String]? = nil
+    ) {
+        self.prefix = prefix
+        self.companyName = companyName
+        self.companyAddress = companyAddress
+        self.countryCode = countryCode
+        self.blockType = blockType
+        self.updated = updated
+        self.isPrivate = isPrivate
+        
+        if let rawData = rawData {
+            self.rawData = rawData
+        } else {
+            self.rawData = [
+                "oui": prefix,
+                "company": companyName,
+                "address": companyAddress,
+                "country": countryCode,
+                "type": blockType,
+                "updated": updated,
+                "private": isPrivate ? "true" : "false"
+            ]
+        }
+    }
+    
     private enum CodingKeys: String, CodingKey {
         case prefix = "oui"
         case companyName = "company"
@@ -361,50 +404,10 @@ public actor MACLookup {
     /// Updates the local database with the latest data from the online source.
     /// - Throws: `MACLookupError` if the update fails for any reason.
     private func updateDatabase() async throws {
-        let url = URL(string: "https://maclookup.app/downloads/json-database")!
+        let url = URL(string: "https://standards-oui.ieee.org/oui/oui.txt")!
         
-        // Use URLSession with completion handler for broader platform support
+        // Download the OUI text file
         let data: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let task = session.dataTask(with: url) { data, _, error in
-                if let error = error {
-                    continuation.resume(throwing: MACLookupError.networkError(error))
-                } else if let data = data {
-                    continuation.resume(returning: data)
-                } else {
-                    continuation.resume(throwing: MACLookupError.networkError(
-                        NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown, userInfo: nil)
-                    ))
-                }
-            }
-            task.resume()
-        }
-        
-        // Parse the downloaded data to ensure it's valid JSON
-        _ = try decoder.decode([String: MACVendorInfo].self, from: data)
-        
-        // Save the downloaded data to the local database file
-        try data.write(to: localDatabaseURL)
-        
-        // Reload the local database
-        try loadLocalDatabase()
-    }
-    
-    // MARK: - Private Methods
-    
-    private func lookupOnline(_ macAddress: MACAddress) async throws -> MACVendorInfo {
-        // Check if we have an API key
-        guard let apiKey = try? String(contentsOf: configURL).trimmingCharacters(in: .whitespacesAndNewlines),
-              !apiKey.isEmpty else {
-            throw MACLookupError.invalidConfiguration("API key not found in config file")
-        }
-        
-        let urlString = "https://api.maclookup.app/v2/macs/\(macAddress.oui)?apiKey=\(apiKey)"
-        guard let url = URL(string: urlString) else {
-            throw MACLookupError.invalidConfiguration("Invalid API URL")
-        }
-        
-        // Make the API request
-        let data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             let task = session.dataTask(with: url) { data, response, error in
                 if let error = error {
                     continuation.resume(throwing: MACLookupError.networkError(error))
@@ -412,13 +415,11 @@ public actor MACLookup {
                 }
                 
                 guard let httpResponse = response as? HTTPURLResponse,
-                      (200...299).contains(httpResponse.statusCode) else {
-                    continuation.resume(throwing: MACLookupError.apiError("Invalid server response"))
-                    return
-                }
-                
-                guard let data = data else {
-                    continuation.resume(throwing: MACLookupError.apiError("No data received"))
+                      (200...299).contains(httpResponse.statusCode),
+                      let data = data else {
+                    continuation.resume(throwing: MACLookupError.networkError(
+                        NSError(domain: NSURLErrorDomain, code: NSURLErrorBadServerResponse, userInfo: nil)
+                    ))
                     return
                 }
                 
@@ -427,22 +428,54 @@ public actor MACLookup {
             task.resume()
         }
         
-        // Parse the response
-        do {
-            var result = try JSONDecoder().decode([String: String].self, from: data)
-            guard let company = result["company"], !company.isEmpty else {
-                throw MACLookupError.notFound(macAddress.description)
-            }
-            
-            // Update the result with the OUI from the MAC address
-            result["oui"] = macAddress.oui
-            
-            // Convert the dictionary to JSON data and then decode into MACVendorInfo
-            let vendorData = try JSONSerialization.data(withJSONObject: result, options: [])
-            let decoder = JSONDecoder()
-            return try decoder.decode(MACVendorInfo.self, from: vendorData)
-        } catch {
-            throw MACLookupError.apiError("Failed to decode API response: \(error.localizedDescription)")
+        // Parse the OUI data
+        let ouiDictionary = try OUIParser.parse(data)
+        
+        // Convert to MACVendorInfo format
+        var vendorInfo: [String: MACVendorInfo] = [:]
+        for (prefix, vendorName) in ouiDictionary {
+            vendorInfo[prefix] = MACVendorInfo.from(vendorName: vendorName)
         }
+        
+        // Encode and save the data
+        let jsonData = try JSONEncoder().encode(vendorInfo)
+        try jsonData.write(to: localDatabaseURL)
+        
+        // Reload the local database
+        try loadLocalDatabase()
+    }
+    
+    // MARK: - Private Methods
+    
+    private func lookupOnline(_ macAddress: MACAddress) async throws -> MACVendorInfo {
+        // Download the latest OUI data and perform the lookup
+        let oui = macAddress.oui
+        
+        // First try to find in local database
+        if let vendor = localDatabase[oui] {
+            return vendor
+        }
+        
+        // If not found, try to update the database
+        try await updateDatabase()
+        
+        // Try again after update
+        if let vendor = localDatabase[oui] {
+            return vendor
+        }
+        
+        // If still not found, try with shorter prefixes (OUI-36 and OUI-28)
+        let prefixes = [
+            String(oui.prefix(6)),  // OUI-36 (28-bit)
+            String(oui.prefix(4))   // OUI-28 (20-bit)
+        ]
+        
+        for prefix in prefixes {
+            if let vendor = localDatabase[prefix] {
+                return vendor
+            }
+        }
+        
+        throw MACLookupError.notFound("No vendor found for MAC address: \(macAddress.description)")
     }
 }
