@@ -10,35 +10,37 @@ struct OUIParser {
         guard let text = String(data: data, encoding: .utf8) else {
             throw MACLookupError.apiError("Failed to decode OUI data as UTF-8")
         }
-        
+
         var result: [String: String] = [:]
         var currentOUI: String? = nil
         var vendorName: String = ""
-        
+
         let lines = text.components(separatedBy: .newlines)
-        
+
         for line in lines {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-            
+
             // Skip empty lines and comments
             if trimmedLine.isEmpty || trimmedLine.hasPrefix("#") {
                 continue
             }
-            
+
             // Check for OUI line (starts with a MAC prefix)
             let components = trimmedLine.components(separatedBy: .whitespaces)
                 .filter { !$0.isEmpty }
-            
-            if components.count >= 2, 
-               let firstComponent = components.first, 
-               firstComponent.range(of: "^([0-9A-F]{2}-){2}[0-9A-F]{2}$", 
-                                 options: [.regularExpression, .caseInsensitive]) != nil {
-                
+
+            if components.count >= 2,
+                let firstComponent = components.first,
+                firstComponent.range(
+                    of: "^([0-9A-F]{2}-){2}[0-9A-F]{2}$",
+                    options: [.regularExpression, .caseInsensitive]) != nil
+            {
+
                 // Save the previous entry if we have one
                 if let oui = currentOUI, !vendorName.isEmpty {
                     result[oui] = vendorName
                 }
-                
+
                 // Start a new entry
                 currentOUI = firstComponent.replacingOccurrences(of: "-", with: "").uppercased()
                 vendorName = components.dropFirst().joined(separator: " ")
@@ -47,12 +49,12 @@ struct OUIParser {
                 vendorName += " " + trimmedLine
             }
         }
-        
+
         // Add the last entry
         if let oui = currentOUI, !vendorName.isEmpty {
             result[oui] = vendorName
         }
-        
+
         return result
     }
 }

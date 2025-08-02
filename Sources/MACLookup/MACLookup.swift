@@ -1,6 +1,7 @@
 import Foundation
+
 #if canImport(FoundationNetworking)
-import FoundationNetworking
+    import FoundationNetworking
 #endif
 
 /// The URL of the IEEE OUI file.
@@ -13,19 +14,17 @@ public struct MACAddress: Hashable, Codable, CustomStringConvertible, Sendable {
 
     /// A string representation of the MAC address in the format "XX:XX:XX:XX:XX:XX".
     public var description: String {
-        String(format: "%02X:%02X:%02X:%02X:%02X:%02X",
-               bytes.0, bytes.1, bytes.2, bytes.3, bytes.4, bytes.5)
+        String(
+            format: "%02X:%02X:%02X:%02X:%02X:%02X",
+            bytes.0, bytes.1, bytes.2, bytes.3, bytes.4, bytes.5)
     }
 
     // MARK: - Equatable
 
     public static func == (lhs: MACAddress, rhs: MACAddress) -> Bool {
-        lhs.bytes.0 == rhs.bytes.0 &&
-        lhs.bytes.1 == rhs.bytes.1 &&
-        lhs.bytes.2 == rhs.bytes.2 &&
-        lhs.bytes.3 == rhs.bytes.3 &&
-        lhs.bytes.4 == rhs.bytes.4 &&
-        lhs.bytes.5 == rhs.bytes.5
+        lhs.bytes.0 == rhs.bytes.0 && lhs.bytes.1 == rhs.bytes.1 && lhs.bytes.2 == rhs.bytes.2
+            && lhs.bytes.3 == rhs.bytes.3 && lhs.bytes.4 == rhs.bytes.4
+            && lhs.bytes.5 == rhs.bytes.5
     }
 
     // MARK: - Hashable
@@ -76,7 +75,8 @@ public struct MACAddress: Hashable, Codable, CustomStringConvertible, Sendable {
     /// - Parameter string: A string containing a MAC address in common formats (e.g., "00:11:22:33:44:55" or "00-11-22-33-44-55").
     /// - Throws: `MACLookupError.invalidMACAddress` if the string cannot be parsed as a valid MAC address.
     public init(string: String) throws {
-        let normalized = string
+        let normalized =
+            string
             .replacingOccurrences(of: "-", with: ":")
             .replacingOccurrences(of: ".", with: ":")
             .lowercased()
@@ -172,7 +172,7 @@ public struct MACVendorInfo: Codable, Sendable {
                 "country": countryCode,
                 "type": blockType,
                 "updated": updated,
-                "private": isPrivate ? "true" : "false"
+                "private": isPrivate ? "true" : "false",
             ]
         }
     }
@@ -188,7 +188,9 @@ public struct MACVendorInfo: Codable, Sendable {
     }
 
     // Helper to decode a value that might be a String or a Bool as a String
-    private static func decodeStringOrBool(from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys) throws -> String {
+    private static func decodeStringOrBool(
+        from container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) throws -> String {
         if let boolValue = try? container.decodeIfPresent(Bool.self, forKey: key) {
             return boolValue ? "true" : "false"
         }
@@ -215,7 +217,8 @@ public struct MACVendorInfo: Codable, Sendable {
         // Handle private field that might be a string or a boolean
         if let boolValue = try? container.decodeIfPresent(Bool.self, forKey: .isPrivate) {
             isPrivate = boolValue
-        } else if let stringValue = try? container.decodeIfPresent(String.self, forKey: .isPrivate) {
+        } else if let stringValue = try? container.decodeIfPresent(String.self, forKey: .isPrivate)
+        {
             isPrivate = stringValue.lowercased() == "true"
         } else {
             isPrivate = false
@@ -229,7 +232,7 @@ public struct MACVendorInfo: Codable, Sendable {
             "country": countryCode,
             "type": blockType,
             "updated": updated,
-            "private": isPrivate ? "true" : "false"
+            "private": isPrivate ? "true" : "false",
         ]
 
         // Try to decode any additional fields using a dynamic coding keys approach
@@ -244,11 +247,14 @@ public struct MACVendorInfo: Codable, Sendable {
                 // Try to decode the value as a string, bool, number, or null
                 if let value = try? dynamicContainer.decodeIfPresent(String.self, forKey: key) {
                     rawData[key.stringValue] = value
-                } else if let value = try? dynamicContainer.decodeIfPresent(Bool.self, forKey: key) {
+                } else if let value = try? dynamicContainer.decodeIfPresent(Bool.self, forKey: key)
+                {
                     rawData[key.stringValue] = value ? "true" : "false"
                 } else if let value = try? dynamicContainer.decodeIfPresent(Int.self, forKey: key) {
                     rawData[key.stringValue] = String(value)
-                } else if let value = try? dynamicContainer.decodeIfPresent(Double.self, forKey: key) {
+                } else if let value = try? dynamicContainer.decodeIfPresent(
+                    Double.self, forKey: key)
+                {
                     rawData[key.stringValue] = String(value)
                 } else if (try? dynamicContainer.decodeNil(forKey: key)) == true {
                     rawData[key.stringValue] = "null"
@@ -357,14 +363,16 @@ public actor MACLookup {
         session: URLSession? = nil
     ) {
         let fileManager = FileManager.default
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first!
         let bundleID = Bundle.main.bundleIdentifier ?? "com.maclookup"
         let appSupportDir = appSupport.appendingPathComponent(bundleID, isDirectory: true)
 
         // Create application support directory if it doesn't exist
         try? fileManager.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 
-        self.localDatabaseURL = localDatabaseURL ?? appSupportDir.appendingPathComponent("macaddress-db.json")
+        self.localDatabaseURL =
+            localDatabaseURL ?? appSupportDir.appendingPathComponent("macaddress-db.json")
         self.onlineURL = onlineURL
 
         // Use the provided session or create a new one
@@ -390,21 +398,21 @@ public actor MACLookup {
         let attributes = try FileManager.default.attributesOfItem(atPath: localDatabaseURL.path)
         self.lastUpdated = attributes[.modificationDate] as? Date
     }
-    
+
     /// Saves the local database to disk.
     /// - Throws: `MACLookupError.databaseError` if the database cannot be saved.
     public func saveLocalDatabase() async throws {
         let data = try JSONEncoder().encode(localDatabase)
-        
+
         // Perform file I/O in a detached task
         try await Task.detached {
             try data.write(to: self.localDatabaseURL, options: [.atomic])
         }.value
-        
+
         // Update the last modified date in the actor's context
         self.lastUpdated = Date()
     }
-    
+
     /// Looks up vendor information for a MAC address in the local database only.
     /// - Parameter macAddress: The MAC address to look up.
     /// - Returns: The vendor information if found.
@@ -417,7 +425,7 @@ public actor MACLookup {
         }
         return vendorInfo
     }
-    
+
     /// Internal helper to get vendor info from local database without throwing
     private func getLocalVendorInfo(for address: MACAddress) -> MACVendorInfo? {
         return localDatabase[address.oui]
@@ -429,33 +437,35 @@ public actor MACLookup {
     ///   - updateLocal: Whether to update the local database with the results. Defaults to `true`.
     /// - Returns: The vendor information if found.
     /// - Throws: Errors related to network operations or parsing.
-    public func lookupOnline(_ macAddress: String, updateLocal: Bool = true) async throws -> MACVendorInfo {
+    public func lookupOnline(_ macAddress: String, updateLocal: Bool = true) async throws
+        -> MACVendorInfo
+    {
         let address = try MACAddress(string: macAddress)
-        
+
         // Download and parse the OUI database
         let (data, _) = try await session.data(from: onlineURL)
-        
+
         // Parse the OUI database
         let ouiDictionary = try OUIParser.parse(data)
-        
+
         // Look up the vendor info for the OUI
-        let oui = address.oui.prefix(6).uppercased() // Use first 6 characters of OUI
+        let oui = address.oui.prefix(6).uppercased()  // Use first 6 characters of OUI
         guard let vendorName = ouiDictionary[String(oui)] else {
             throw MACLookupError.notFound("No vendor found for MAC address: \(macAddress)")
         }
-        
+
         // Create a MACVendorInfo instance from the vendor name
         let vendorInfo = MACVendorInfo.from(vendorName: vendorName)
-        
+
         // Update local database if requested
         if updateLocal {
             localDatabase[String(oui)] = vendorInfo
             try await saveLocalDatabase()
         }
-        
+
         return vendorInfo
     }
-    
+
     /// Looks up vendor information for a MAC address, first checking the local database
     /// and then falling back to the online database if not found.
     /// - Parameter macAddress: The MAC address to look up.
@@ -470,7 +480,7 @@ public actor MACLookup {
             throw error
         }
     }
-    
+
     /// Looks up the vendor information for a MAC address.
     /// - Parameter macAddress: The MAC address to look up.
     /// - Returns: The vendor information if found.
@@ -480,7 +490,7 @@ public actor MACLookup {
         if let vendorInfo = getLocalVendorInfo(for: macAddress) {
             return vendorInfo
         }
-        
+
         // If not found locally, try online lookup
         do {
             return try await lookupOnline(macAddress.description)
@@ -506,22 +516,27 @@ public actor MACLookup {
         if url.isFileURL {
             data = try Data(contentsOf: url)
         } else {
-            data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+            data = try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Data, Error>) in
                 let task = session.dataTask(with: url) { data, response, error in
                     if let error = error {
                         continuation.resume(throwing: MACLookupError.networkError(error))
                         return
                     }
-                    
+
                     guard let httpResponse = response as? HTTPURLResponse,
-                          (200...299).contains(httpResponse.statusCode),
-                          let data = data else {
-                        continuation.resume(throwing: MACLookupError.networkError(
-                            NSError(domain: NSURLErrorDomain, code: NSURLErrorBadServerResponse, userInfo: nil)
-                        ))
+                        (200...299).contains(httpResponse.statusCode),
+                        let data = data
+                    else {
+                        continuation.resume(
+                            throwing: MACLookupError.networkError(
+                                NSError(
+                                    domain: NSURLErrorDomain, code: NSURLErrorBadServerResponse,
+                                    userInfo: nil)
+                            ))
                         return
                     }
-                    
+
                     continuation.resume(returning: data)
                 }
                 @discardableResult let _ = task.resume()
@@ -553,7 +568,9 @@ public actor MACLookup {
     ///     - macAddress: The MAC address to look up.
     ///     - url: The URL of the online source to look up from. Defaults to the IEEE OUI URL.
     /// - Returns: A `MACVendorInfo` instance containing the vendor information.
-    public func lookupOnline(_ macAddress: MACAddress, at onlineURL: URL? = nil) async throws -> MACVendorInfo {
+    public func lookupOnline(_ macAddress: MACAddress, at onlineURL: URL? = nil) async throws
+        -> MACVendorInfo
+    {
         let url = onlineURL ?? self.onlineURL
 
         // Download the latest OUI data and perform the lookup
@@ -575,7 +592,7 @@ public actor MACLookup {
         // If still not found, try with shorter prefixes (OUI-36 and OUI-28)
         let prefixes = [
             String(oui.prefix(6)),  // OUI-36 (28-bit)
-            String(oui.prefix(4))   // OUI-28 (20-bit)
+            String(oui.prefix(4)),  // OUI-28 (20-bit)
         ]
 
         for prefix in prefixes {

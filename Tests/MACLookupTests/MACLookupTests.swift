@@ -1,40 +1,41 @@
-import Testing
 import Foundation
+import Testing
+
 import class Foundation.Bundle
+
 @testable import MACLookup
 
 #if canImport(FoundationNetworking)
-import FoundationNetworking
+    import FoundationNetworking
 #endif
 
 // MARK: - Test Configuration
 
 private let testDatabase = """
-{
-    "001122": {
-        "oui": "001122",
+    {
+        "001122": {
+            "oui": "001122",
+            "company": "Test Company",
+            "address": "123 Test St, Test City, AU",
+            "country": "AU",
+            "type": "MA-L",
+            "updated": "2023-01-01",
+            "private": false
+        }
+    }
+    """
+
+private let testAPIResponse = """
+    {
+        "oui": "00:11:22",
         "company": "Test Company",
-        "address": "123 Test St, Test City, AU",
+        "address": "123 Test St",
         "country": "AU",
         "type": "MA-L",
         "updated": "2023-01-01",
         "private": false
     }
-}
-"""
-
-private let testAPIResponse = """
-{
-    "oui": "00:11:22",
-    "company": "Test Company",
-    "address": "123 Test St",
-    "country": "AU",
-    "type": "MA-L",
-    "updated": "2023-01-01",
-    "private": false
-}
-"""
-
+    """
 
 @Suite("MACAddress Tests")
 struct MACAddressTests {
@@ -44,26 +45,26 @@ struct MACAddressTests {
             "00:11:22:33:44:55",
             "00-11-22-33-44-55",
             "00.11.22.33.44.55",
-            "0011.2233.4455"
+            "0011.2233.4455",
         ]
-        
+
         for macString in macStrings {
             let mac = try #require(try? MACAddress(string: macString))
             #expect(mac.description == "00:11:22:33:44:55")
             #expect(mac.oui == "001122")
         }
     }
-    
+
     @Test("Invalid MAC address initialisation")
     func testInvalidMACAddress() throws {
         let invalidMACs = [
             "00:11:22:33:44:GG",  // Invalid character
-            "00:11:22:33:44",     // Too short
-            "00:11:22:33:44:55:66", // Too long
-            "not a mac address",   // Completely invalid
-            ""                     // Empty string
+            "00:11:22:33:44",  // Too short
+            "00:11:22:33:44:55:66",  // Too long
+            "not a mac address",  // Completely invalid
+            "",  // Empty string
         ]
-        
+
         for macString in invalidMACs {
             #expect(throws: (any Error).self) {
                 _ = try MACAddress(string: macString)
@@ -77,21 +78,21 @@ struct MACVendorInfoTests {
     @Test("Decoding from JSON")
     func testDecoding() throws {
         let json = """
-        {
-            "oui": "00:11:22",
-            "company": "Test Company",
-            "address": "123 Test St, Test City",
-            "country": "AU",
-            "type": "MA-L",
-            "updated": "2023-01-01",
-            "private": false
-        }
-        """
-        
+            {
+                "oui": "00:11:22",
+                "company": "Test Company",
+                "address": "123 Test St, Test City",
+                "country": "AU",
+                "type": "MA-L",
+                "updated": "2023-01-01",
+                "private": false
+            }
+            """
+
         let data = try #require(json.data(using: .utf8))
         let decoder = JSONDecoder()
         let vendorInfo = try decoder.decode(MACVendorInfo.self, from: data)
-        
+
         #expect(vendorInfo.prefix == "00:11:22")
         #expect(vendorInfo.companyName == "Test Company")
         #expect(vendorInfo.companyAddress == "123 Test St, Test City")
@@ -109,44 +110,44 @@ struct MACLookupTests {
     private let testDBURL: URL
     private let testConfigURL: URL
     private var testResourcesURL: URL
-    
+
     @Test("Initialisation and setup")
     func testInitialisation() async throws {
         // The test just verifies that the files are created during init
         let lookup = MACLookup(localDatabaseURL: testDBURL, onlineURL: Self.testURL ?? ieeeOUIURL)
         let lastUpdated = await lookup.lastUpdated
         #expect(lastUpdated == nil)
-        
+
         // Verify files were created
         let fileManager = FileManager.default
         #expect(fileManager.fileExists(atPath: testDBURL.path))
         #expect(fileManager.fileExists(atPath: testConfigURL.path))
     }
-    
+
     @Test("Test resources can be loaded")
     func testResourcesLoad() throws {
         #expect(Self.testURL != nil)
         guard let resourceURL = Self.testURL else { return }
         do {
-                let content = try String(contentsOf: resourceURL, encoding: .utf8)
-                if content.isEmpty {
-                    print("Warning: Test resource 'testoui.txt' is empty")
-                }
-            } catch {
-                print("Warning: Could not read test resource: \(error)")
+            let content = try String(contentsOf: resourceURL, encoding: .utf8)
+            if content.isEmpty {
+                print("Warning: Test resource 'testoui.txt' is empty")
+            }
+        } catch {
+            print("Warning: Could not read test resource: \(error)")
         }
     }
-    
+
     @Test("Database loading and updating")
     func testDatabaseLoading() async throws {
         // Create a unique temporary directory for this test
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("MACLookupTest-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        
+
         // Set up test file path in the temporary directory
         let testDBPath = tempDir.appendingPathComponent("test_db.json")
-        
+
         // Set up mock response for API calls
         MockURLProtocol.requestHandler = { request in
             let response = HTTPURLResponse(
@@ -158,59 +159,59 @@ struct MACLookupTests {
             // Return a valid OUI text file in the format expected by OUIParser
             // The parser will include everything after the OUI in the vendor name
             let ouiText = """
-            33-11-22     (hex)		Some Inc
-                Some Inc
-                Some City  Some State  123-456
-                AU
-            
-            44-11-23     (hex)		Another Company
-                Another Address Line 1
-                Another City, Another State 67890
-                US
-            """
-            
+                33-11-22     (hex)		Some Inc
+                    Some Inc
+                    Some City  Some State  123-456
+                    AU
+
+                44-11-23     (hex)		Another Company
+                    Another Address Line 1
+                    Another City, Another State 67890
+                    US
+                """
+
             // The OUIParser expects the OUI in the format "XX-XX-XX" and will convert it to "XXXXXX"
             // So "00-11-22" will be converted to "001122" in the database
             // The parser will include everything after the OUI in the vendor name
             return (response, ouiText.data(using: .utf8)!)
         }
-        
+
         // Initialize MACLookup with our test path
         let lookup = MACLookup(localDatabaseURL: testDBPath, onlineURL: Self.testURL!)
-        
+
         // Test updating the database first to populate it with mock data
         try await lookup.updateDatabase()
-        
+
         // Test looking up a MAC address from the updated database
         let localVendor = try await lookup.lookup("00:11:22:33:44:55")
-        
+
         // The OUIParser includes everything after the OUI in the vendor name
         // The MACVendorInfo.from(vendorName:) method uses this as the company name
         let expectedVendorName = "(hex) First"
         #expect(localVendor.companyName == expectedVendorName)
-        #expect(localVendor.companyAddress.isEmpty) // Address is empty in MACVendorInfo.from(vendorName:)
-        #expect(localVendor.countryCode.isEmpty) // Country code is empty in MACVendorInfo.from(vendorName:)
-        
+        #expect(localVendor.companyAddress.isEmpty)  // Address is empty in MACVendorInfo.from(vendorName:)
+        #expect(localVendor.countryCode.isEmpty)  // Country code is empty in MACVendorInfo.from(vendorName:)
+
         // Clean up the temporary directory
         try? FileManager.default.removeItem(at: tempDir)
-        
+
         // Reset the request handler
         MockURLProtocol.reset()
     }
-    
+
     @Test("Configuration loading")
     func testConfiguration() async throws {
         // Create a unique temporary directory for this test
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("MACLookupTest-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        
+
         // Create test files
         let testDBURL = tempDir.appendingPathComponent("test-db.json")
-        
+
         // Write test data
         try testDatabase.write(to: testDBURL, atomically: true, encoding: .utf8)
-        
+
         // Set up mock response for OUI data with proper format
         MockURLProtocol.requestHandler = { request in
             let response = HTTPURLResponse(
@@ -221,26 +222,27 @@ struct MACLookupTests {
             )!
             // Return a valid OUI text file in the format expected by OUIParser
             let ouiText = """
-            00-11-22     Test Company
-                Test Address, Test City, AU
-            """
+                00-11-22     Test Company
+                    Test Address, Test City, AU
+                """
             return (response, Data(ouiText.utf8))
         }
-        
+
         // Initialize MACLookup with our test paths
-        let lookup = MACLookup(localDatabaseURL: testDBURL, session: MockURLProtocol.createMockURLSession())
-        
+        let lookup = MACLookup(
+            localDatabaseURL: testDBURL, session: MockURLProtocol.createMockURLSession())
+
         // Test that the database was loaded
         try await lookup.loadLocalDatabase()
         let vendor = try await lookup.lookup("00:11:22:33:44:55")
         #expect(vendor.companyName == "Test Company")
-        
+
         // Clean up
         try? FileManager.default.removeItem(at: tempDir)
     }
-    
+
     // MARK: - Test Lifecycle
-    
+
     init() {
         do {
             // Create a temporary directory for tests
@@ -260,8 +262,9 @@ struct MACLookupTests {
                 testBundle.resourceURL,
                 testBundle.resourceURL?.appendingPathComponent("Resources"),
                 testBundle.bundleURL.appendingPathComponent("Resources"),
-                testBundle.bundleURL.deletingLastPathComponent().appendingPathComponent("Resources"),
-                testBundle.bundleURL.appendingPathComponent("MACLookupTests/Resources")
+                testBundle.bundleURL.deletingLastPathComponent().appendingPathComponent(
+                    "Resources"),
+                testBundle.bundleURL.appendingPathComponent("MACLookupTests/Resources"),
             ].compactMap { $0 }
 
             // Try to find the resources directory, but don't fail if not found
@@ -269,22 +272,26 @@ struct MACLookupTests {
             for url in possibleResourceDirs {
                 var isDirectory: ObjCBool = false
                 if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-                   isDirectory.boolValue {
+                    isDirectory.boolValue
+                {
                     foundResourcesURL = url
                     break
                 }
             }
-            
+
             // If we couldn't find the resources directory, try to create it
             if foundResourcesURL == nil, let firstDir = possibleResourceDirs.first {
                 do {
-                    try FileManager.default.createDirectory(at: firstDir, withIntermediateDirectories: true)
+                    try FileManager.default.createDirectory(
+                        at: firstDir, withIntermediateDirectories: true)
                     foundResourcesURL = firstDir
                 } catch {
-                    print("Warning: Could not create test resources directory at \(firstDir.path): \(error)")
+                    print(
+                        "Warning: Could not create test resources directory at \(firstDir.path): \(error)"
+                    )
                 }
             }
-            
+
             // Set the test resources URL, even if it's nil - tests will handle it
             testResourcesURL = foundResourcesURL ?? URL(fileURLWithPath: NSTemporaryDirectory())
 
@@ -301,10 +308,12 @@ struct MACLookupTests {
     func cleanup() throws {
         // Remove the temporary directory if it exists
         var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: tempDir.path, isDirectory: &isDirectory), isDirectory.boolValue {
+        if FileManager.default.fileExists(atPath: tempDir.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        {
             try? FileManager.default.removeItem(at: tempDir)
         }
-        
+
         // Clean up any test files that might have been created
         for url in [testDBURL, testConfigURL] {
             if FileManager.default.fileExists(atPath: url.path) {
@@ -318,13 +327,14 @@ struct MACLookupTests {
 
 extension Test {
     /// Helper function to unwrap an optional or fail the test
-    static func `require`<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) throws -> T {
+    static func `require`<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) throws
+        -> T
+    {
         guard let value = value else {
             throw TestError.requiredValueIsNil(file: file, line: line)
         }
         return value
     }
-    
 
 }
 
@@ -340,4 +350,3 @@ extension TestError: CustomStringConvertible {
         }
     }
 }
-
