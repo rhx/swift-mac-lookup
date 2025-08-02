@@ -159,7 +159,14 @@ struct HWAddrLookup: AsyncParsableCommand {
         for mac in macAddresses {
             if debug { print("DEBUG: Looking up MAC address: \(mac)") }
             do {
-                let vendorInfo = try await lookup.lookup(mac)
+                let vendorInfo: MACVendorInfo
+                if local {
+                    // Use local-only lookup when --local flag is specified
+                    vendorInfo = try await lookup.lookupLocal(mac)
+                } else {
+                    // Use normal lookup with fallback to online
+                    vendorInfo = try await lookup.lookup(mac)
+                }
                 print("\(mac): \(vendorInfo.companyName)")
                 if !vendorInfo.companyAddress.isEmpty {
                     print("   \(vendorInfo.companyAddress)")
