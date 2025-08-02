@@ -71,6 +71,43 @@ struct MACAddressTests {
             }
         }
     }
+
+    @Test("Locally administered MAC address detection")
+    func testLocallyAdministeredDetection() throws {
+        // Test locally administered MAC addresses (second bit of first octet is 1)
+        let locallyAdministeredMACs = [
+            "02:00:00:00:00:00",  // 0x02 = 00000010
+            "03:11:22:33:44:55",  // 0x03 = 00000011
+            "06:aa:bb:cc:dd:ee",  // 0x06 = 00000110
+            "07:ff:ff:ff:ff:ff",  // 0x07 = 00000111
+            "52:24:97:0b:b8:ce",  // 0x52 = 01010010
+            "82:6b:76:03:46:af",  // 0x82 = 10000010
+        ]
+
+        for macString in locallyAdministeredMACs {
+            let mac = try #require(try? MACAddress(string: macString))
+            #expect(
+                mac.isLocallyAdministered == true,
+                "MAC \(macString) should be detected as locally administered")
+        }
+
+        // Test universally administered MAC addresses (second bit of first octet is 0)
+        let universallyAdministeredMACs = [
+            "00:11:22:33:44:55",  // 0x00 = 00000000
+            "01:aa:bb:cc:dd:ee",  // 0x01 = 00000001
+            "04:ff:ff:ff:ff:ff",  // 0x04 = 00000100
+            "05:12:34:56:78:90",  // 0x05 = 00000101
+            "84:d6:c5:4e:f2:50",  // 0x84 = 10000100
+            "f0:9e:9e:b0:13:30",  // 0xf0 = 11110000
+        ]
+
+        for macString in universallyAdministeredMACs {
+            let mac = try #require(try? MACAddress(string: macString))
+            #expect(
+                mac.isLocallyAdministered == false,
+                "MAC \(macString) should NOT be detected as locally administered")
+        }
+    }
 }
 
 @Suite("MACVendorInfo Tests")
@@ -236,6 +273,53 @@ struct MACLookupTests {
         try await lookup.loadLocalDatabase()
         let vendor = try await lookup.lookup("00:11:22:33:44:55")
         #expect(vendor.companyName == "Test Company")
+
+        // Clean up
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    @Test("Locally administered MAC address lookup")
+    func testLocallyAdministeredLookup() async throws {
+        // Create a unique temporary directory for this test
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MACLookupTest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        // Create test files
+        let testDBURL = tempDir.appendingPathComponent("test-db.json")
+        try testDatabase.write(to: testDBURL, atomically: true, encoding: .utf8)
+
+        // Initialize MACLookup
+        let lookup = MACLookup(localDatabaseURL: testDBURL)
+        try await lookup.loadLocalDatabase()
+
+        // Test locally administered MAC addresses should throw locallyAdministered error
+        let locallyAdministeredMACs = [
+            "02:00:00:00:00:00",
+            "52:24:97:0b:b8:ce",
+            "82:6b:76:03:46:af",
+        ]
+
+        for macString in locallyAdministeredMACs {
+            await #expect(throws: (any Error).self) {
+                do {
+                    _ = try await lookup.lookup(macString)
+                } catch let error as MACLookupError {
+                    switch error {
+                    case .locallyAdministered:
+                        throw error  // Re-throw to satisfy the test expectation
+                    default:
+                        Issue.record("Expected locallyAdministered error but got \(error)")
+                        throw error
+                    }
+                }
+            }
+        }
+
+        // Test that universally administered MAC addresses still work normally
+        await #expect(throws: Never.self) {
+            _ = try await lookup.lookup("00:11:22:33:44:55")
+        }
 
         // Clean up
         try? FileManager.default.removeItem(at: tempDir)

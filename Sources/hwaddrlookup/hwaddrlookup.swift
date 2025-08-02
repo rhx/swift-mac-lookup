@@ -179,6 +179,9 @@ struct HWAddrLookup: AsyncParsableCommand {
             } catch MACLookupError.notFound {
                 print("\(mac): Vendor not found")
                 if debug { print("DEBUG: No vendor found for MAC \(mac)") }
+            } catch MACLookupError.locallyAdministered {
+                print("\(mac): Locally administered (no vendor information)")
+                if debug { print("DEBUG: MAC \(mac) is locally administered") }
             } catch {
                 print("\(mac): Error - \(error.localizedDescription)")
                 if debug { print("DEBUG: Lookup error for \(mac): \(error)") }

@@ -71,6 +71,12 @@ public struct MACAddress: Hashable, Codable, CustomStringConvertible, Sendable {
         String(format: "%02X%02X%02X", bytes.0, bytes.1, bytes.2)
     }
 
+    /// Indicates whether this MAC address is locally administered.
+    /// A MAC address is locally administered if the second bit of the first octet is set to 1.
+    public var isLocallyAdministered: Bool {
+        return (bytes.0 & 0x02) != 0
+    }
+
     /// Creates a MAC address from a string representation.
     /// - Parameter string: A string containing a MAC address in common formats (e.g., "00:11:22:33:44:55" or "00-11-22-33-44-55").
     /// - Throws: `MACLookupError.invalidMACAddress` if the string cannot be parsed as a valid MAC address.
@@ -304,6 +310,9 @@ public enum MACLookupError: Error, LocalizedError, Sendable {
     /// The MAC address was not found in the database.
     case notFound(String)
 
+    /// The MAC address is locally administered and has no vendor information.
+    case locallyAdministered(String)
+
     /// An error occurred while accessing the local database.
     case databaseError(Error)
 
@@ -322,6 +331,8 @@ public enum MACLookupError: Error, LocalizedError, Sendable {
             return "Invalid MAC address format: \(address)"
         case .notFound(let address):
             return "No vendor information found for MAC address: \(address)"
+        case .locallyAdministered(let address):
+            return "MAC address \(address) is locally administered and has no vendor information"
         case .databaseError(let error):
             return "Database error: \(error.localizedDescription)"
         case .networkError(let error):
@@ -417,9 +428,16 @@ public actor MACLookup {
     /// - Parameter macAddress: The MAC address to look up.
     /// - Returns: The vendor information if found.
     /// - Throws: `MACLookupError.invalidMACAddress` if the MAC address is invalid.
+    /// - Throws: `MACLookupError.locallyAdministered` if the MAC address is locally administered.
     /// - Throws: `MACLookupError.notFound` if no vendor information is found in the local database.
     public func lookupLocal(_ macAddress: String) throws -> MACVendorInfo {
         let address = try MACAddress(string: macAddress)
+
+        // Check if the MAC address is locally administered
+        if address.isLocallyAdministered {
+            throw MACLookupError.locallyAdministered(macAddress)
+        }
+
         guard let vendorInfo = localDatabase[address.oui] else {
             throw MACLookupError.notFound("No vendor found for MAC address: \(macAddress)")
         }
@@ -467,11 +485,21 @@ public actor MACLookup {
     }
 
     /// Looks up vendor information for a MAC address, first checking the local database
+    /// Looks up the vendor information for a MAC address.
+    /// This method first checks if the MAC address is locally administered,
+    /// then tries to find the vendor information in the local database,
     /// and then falling back to the online database if not found.
     /// - Parameter macAddress: The MAC address to look up.
     /// - Returns: The vendor information if found.
     /// - Throws: `MACLookupError` if the lookup fails.
     public func lookup(_ macAddress: String) async throws -> MACVendorInfo {
+        let address = try MACAddress(string: macAddress)
+
+        // Check if the MAC address is locally administered
+        if address.isLocallyAdministered {
+            throw MACLookupError.locallyAdministered(macAddress)
+        }
+
         do {
             return try lookupLocal(macAddress)
         } catch MACLookupError.notFound {
@@ -486,6 +514,11 @@ public actor MACLookup {
     /// - Returns: The vendor information if found.
     /// - Throws: `MACLookupError` if the lookup fails.
     public func lookup(_ macAddress: MACAddress) async throws -> MACVendorInfo {
+        // Check if the MAC address is locally administered
+        if macAddress.isLocallyAdministered {
+            throw MACLookupError.locallyAdministered(macAddress.description)
+        }
+
         // First try local lookup
         if let vendorInfo = getLocalVendorInfo(for: macAddress) {
             return vendorInfo
