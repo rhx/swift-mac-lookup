@@ -168,10 +168,10 @@ struct MACLookupTests {
         do {
             let content = try String(contentsOf: resourceURL, encoding: .utf8)
             if content.isEmpty {
-                print("Warning: Test resource 'testoui.txt' is empty")
+                fputs("Warning: Test resource 'testoui.txt' is empty\n", stderr)
             }
         } catch {
-            print("Warning: Could not read test resource: \(error)")
+            fputs("Warning: Could not read test resource: \(error)\n", stderr)
         }
     }
 
@@ -370,8 +370,9 @@ struct MACLookupTests {
                         at: firstDir, withIntermediateDirectories: true)
                     foundResourcesURL = firstDir
                 } catch {
-                    print(
-                        "Warning: Could not create test resources directory at \(firstDir.path): \(error)"
+                    fputs(
+                        "Warning: Could not create test resources directory at \(firstDir.path): \(error)\n",
+                        stderr
                     )
                 }
             }

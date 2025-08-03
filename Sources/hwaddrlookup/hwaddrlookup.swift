@@ -116,8 +116,7 @@ actor FileCacheManager {
         let exists = fileExists(at: cacheFile)
 
         if debug {
-            print("DEBUG: Cache file path: \(cacheFile.path)")
-            print("DEBUG: Cache file exists: \(exists)")
+            print("DEBUG: Cache file: \(cacheFile.path) (exists: \(exists))")
             if exists {
                 do {
                     let attributes = try fileManager.attributesOfItem(atPath: cacheFile.path)
@@ -130,7 +129,7 @@ actor FileCacheManager {
                         print("DEBUG: Cache file size: \(size) bytes")
                     }
                 } catch {
-                    print("DEBUG: Error reading cache file attributes: \(error)")
+                    fputs("DEBUG: Error reading cache attributes: \(error)\n", stderr)
                 }
             }
             print("DEBUG: Force update: \(forceUpdate)")
@@ -292,7 +291,6 @@ struct HWAddrLookup: AsyncParsableCommand {
         }
 
         if shouldUpdate {
-            if debug { print("DEBUG: Starting database update...") }
             print("Updating MAC address database...")
             try await lookup.updateDatabase()
             if debug { print("DEBUG: Database update completed") }
@@ -303,9 +301,10 @@ struct HWAddrLookup: AsyncParsableCommand {
             // Load the local database
             do {
                 try await lookup.loadLocalDatabase()
-                if debug { print("DEBUG: Local database loaded successfully") }
             } catch {
-                if debug { print("DEBUG: Failed to load local database: \(error)") }
+                if debug {
+                    fputs("DEBUG: Failed to load local database: \(error)\n", stderr)
+                }
                 throw error
             }
         }
@@ -326,20 +325,13 @@ struct HWAddrLookup: AsyncParsableCommand {
                 if !vendorInfo.companyAddress.isEmpty {
                     print("   \(vendorInfo.companyAddress)")
                 }
-                if debug {
-                    print(
-                        "DEBUG: Found vendor info - Prefix: \(vendorInfo.prefix), Type: \(vendorInfo.blockType)"
-                    )
-                }
+
             } catch MACLookupError.notFound {
-                print("\(mac): Vendor not found")
-                if debug { print("DEBUG: No vendor found for MAC \(mac)") }
+                fputs("\(mac): Vendor not found\n", stderr)
             } catch MACLookupError.locallyAdministered {
-                print("\(mac): Locally administered (no vendor information)")
-                if debug { print("DEBUG: MAC \(mac) is locally administered") }
+                fputs("\(mac): Locally administered (no vendor information)\n", stderr)
             } catch {
-                print("\(mac): Error - \(error.localizedDescription)")
-                if debug { print("DEBUG: Lookup error for \(mac): \(error)") }
+                fputs("\(mac): Error - \(error.localizedDescription)\n", stderr)
             }
         }
     }

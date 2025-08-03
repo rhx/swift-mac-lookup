@@ -423,7 +423,7 @@ public struct MACVendorInfo: Codable, Sendable {
             }
         } catch {
             // Ignore errors in dynamic decoding - we already have the main fields
-            print("Warning: Failed to decode additional fields: \(error)")
+            fputs("Warning: Failed to decode additional fields: \(error)\n", stderr)
         }
 
         self.rawData = rawData
