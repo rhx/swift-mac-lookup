@@ -76,11 +76,12 @@ struct OUIParser {
 
                 // Start a new entry
                 currentOUI = firstComponent.replacingOccurrences(of: "-", with: "").uppercased()
-                vendorName = components.dropFirst().joined(separator: " ")
-            } else if !trimmedLine.hasPrefix("\t") && !vendorName.isEmpty {
-                // Continue the vendor name on the next line if it's not indented
-                vendorName += " " + trimmedLine
+                let rawVendorName = components.dropFirst().joined(separator: " ")
+
+                // Clean up vendor name by removing format artifacts
+                vendorName = cleanVendorName(rawVendorName)
             }
+            // Skip address lines (indented or continuation lines) - we only want the company name
         }
 
         // Add the last entry
@@ -89,6 +90,48 @@ struct OUIParser {
         }
 
         return result
+    }
+
+    /// Cleans up vendor names by removing format artifacts from the OUI data.
+    ///
+    /// The IEEE OUI database includes format markers like "(hex)" and OUI codes
+    /// that should not be part of the clean company name. This method removes
+    /// these artifacts to provide clean vendor names.
+    ///
+    /// - Parameter rawVendorName: The raw vendor name from the OUI file.
+    /// - Returns: A cleaned vendor name with format artifacts removed.
+    private static func cleanVendorName(_ rawVendorName: String) -> String {
+        var cleaned = rawVendorName
+
+        // Remove "(hex)" marker
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\s*\\(hex\\)\\s*",
+            with: " ",
+            options: .regularExpression
+        )
+
+        // Remove "(base 16)" marker if present
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\s*\\(base 16\\)\\s*",
+            with: " ",
+            options: .regularExpression
+        )
+
+        // Remove OUI code patterns (6 hex digits followed by optional text)
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\s+[0-9A-F]{6}\\s.*$",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Clean up extra whitespace
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\s+",
+            with: " ",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespaces)
+
+        return cleaned
     }
 }
 
