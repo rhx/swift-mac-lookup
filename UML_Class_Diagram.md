@@ -1,6 +1,6 @@
 # UML Class Diagram for Swift MAC Lookup
 
-This document provides a comprehensive UML class diagram representation of the Swift MAC Lookup project structure.
+This document provides a UML class diagram representation of the swift-mac-lookup structure.
 
 ## Overview
 
