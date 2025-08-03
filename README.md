@@ -40,7 +40,7 @@ dependencies: [
 ```swift
 import MACLookup
 
-let lookup = MACLookup()
+let resolver = MACLookup()
 
 do {
     let vendorInfo = try await lookup.lookup("00:11:22:33:44:55")
