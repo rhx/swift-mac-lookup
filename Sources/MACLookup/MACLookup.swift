@@ -169,6 +169,7 @@ public struct MACAddress: Hashable, Codable, CustomStringConvertible, Sendable {
     /// - `"00.11.22.33.44.55"` - Dot-separated format
     /// - `"0011.2233.4455"` - Cisco three-group format
     /// - `"001122334455"` - Raw hexadecimal string
+    /// - `"8:b6:1f:d0:f5:d8"` - Format with missing leading zeros
     ///
     /// - Parameter string: A string containing a MAC address in any supported format.
     /// - Throws: `MACLookupError.invalidMACAddress` if the string cannot be parsed as a valid MAC address.
@@ -179,27 +180,69 @@ public struct MACAddress: Hashable, Codable, CustomStringConvertible, Sendable {
             .replacingOccurrences(of: ".", with: ":")
             .lowercased()
 
-        let pattern = #"^([0-9a-fA-F]{2}[:]?){5}([0-9a-fA-F]{2})$"#
-        guard normalized.range(of: pattern, options: .regularExpression) != nil else {
+        // First, try to parse with flexible octet length (1-2 hex digits per octet)
+        let flexiblePattern = #"^([0-9a-f]{1,2}[:]?){5}([0-9a-f]{1,2})$"#
+        guard normalized.range(of: flexiblePattern, options: .regularExpression) != nil else {
             throw MACLookupError.invalidMACAddress(string)
         }
 
-        let hexDigits = normalized.components(separatedBy: ":").joined()
-        guard hexDigits.count == 12 else {
+        // Split into components and pad with leading zeros if needed
+        // Split into components and handle different formats
+        let components = normalized.components(separatedBy: ":")
+
+        // Handle case where there are no separators (raw hex string)
+        let hexComponents: [String]
+        if components.count == 1 {
+            let rawHex = components[0]
+            // For raw hex, we need exactly 12 characters or allow flexible parsing
+            if rawHex.count == 12 {
+                // Split into 6 pairs of 2
+                hexComponents = stride(from: 0, to: rawHex.count, by: 2).map {
+                    String(
+                        rawHex[
+                            rawHex.index(
+                                rawHex.startIndex, offsetBy: $0)..<rawHex.index(
+                                    rawHex.startIndex, offsetBy: $0 + 2)])
+                }
+            } else {
+                throw MACLookupError.invalidMACAddress(string)
+            }
+        } else if components.count == 3 {
+            // Cisco three-group format (e.g., "0011.2233.4455" -> "0011:2233:4455")
+            var expandedComponents: [String] = []
+            for component in components {
+                guard component.count == 4 else {
+                    throw MACLookupError.invalidMACAddress(string)
+                }
+                // Split each 4-character component into two 2-character components
+                let first = String(component.prefix(2))
+                let second = String(component.suffix(2))
+                expandedComponents.append(first)
+                expandedComponents.append(second)
+            }
+            hexComponents = expandedComponents
+        } else if components.count == 6 {
+            // Pad each component to 2 digits
+            hexComponents = components.map { component in
+                component.count == 1 ? "0" + component : component
+            }
+        } else {
             throw MACLookupError.invalidMACAddress(string)
         }
 
-        var index = hexDigits.startIndex
+        // Validate we have exactly 6 components, each 1-2 hex digits
+        guard hexComponents.count == 6 else {
+            throw MACLookupError.invalidMACAddress(string)
+        }
+
         var bytes: [UInt8] = []
-
-        for _ in 0..<6 {
-            let nextIndex = hexDigits.index(index, offsetBy: 2)
-            let byteString = hexDigits[index..<nextIndex]
-            guard let byte = UInt8(byteString, radix: 16) else {
+        for component in hexComponents {
+            guard component.count <= 2,
+                let byte = UInt8(component, radix: 16)
+            else {
                 throw MACLookupError.invalidMACAddress(string)
             }
             bytes.append(byte)
-            index = nextIndex
         }
 
         self.bytes = (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])

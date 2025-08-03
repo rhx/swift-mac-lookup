@@ -227,22 +227,70 @@ struct HWAddrLookup: AsyncParsableCommand {
     @Argument(
         help: "One or more MAC addresses to look up (e.g., 00:11:22:33:44:55)",
         transform: { address in
-            // Remove common separators and convert to uppercase
-            let cleaned = address.replacingOccurrences(
-                of: "[^0-9A-Fa-f]", with: "", options: .regularExpression
-            ).uppercased()
+            // Normalize separators to colons
+            let normalized =
+                address
+                .replacingOccurrences(of: "-", with: ":")
+                .replacingOccurrences(of: ".", with: ":")
+                .lowercased()
 
-            // Validate the cleaned MAC address format (6 bytes = 12 hex digits)
-            guard cleaned.count == 12,
-                cleaned.rangeOfCharacter(
-                    from: CharacterSet(charactersIn: "0123456789ABCDEF").inverted) == nil
-            else {
+            // Split into components and handle different formats
+            let components = normalized.components(separatedBy: ":")
+
+            let hexComponents: [String]
+            if components.count == 1 {
+                // Raw hex string - must be exactly 12 characters
+                let rawHex = components[0]
+                guard rawHex.count == 12,
+                    rawHex.rangeOfCharacter(
+                        from: CharacterSet(charactersIn: "0123456789abcdef").inverted) == nil
+                else {
+                    throw ValidationError("Invalid MAC address format: \(address)")
+                }
+                // Split into 6 pairs
+                hexComponents = stride(from: 0, to: rawHex.count, by: 2).map {
+                    String(
+                        rawHex[
+                            rawHex.index(
+                                rawHex.startIndex, offsetBy: $0)..<rawHex.index(
+                                    rawHex.startIndex, offsetBy: $0 + 2)])
+                }
+            } else if components.count == 3 {
+                // Cisco three-group format (e.g., "0011.2233.4455" -> "0011:2233:4455")
+                var expandedComponents: [String] = []
+                for component in components {
+                    guard component.count == 4,
+                        component.rangeOfCharacter(
+                            from: CharacterSet(charactersIn: "0123456789abcdef").inverted) == nil
+                    else {
+                        throw ValidationError("Invalid MAC address format: \(address)")
+                    }
+                    // Split each 4-character component into two 2-character components
+                    let first = String(component.prefix(2))
+                    let second = String(component.suffix(2))
+                    expandedComponents.append(first)
+                    expandedComponents.append(second)
+                }
+                hexComponents = expandedComponents
+            } else if components.count == 6 {
+                // Components separated by colons - validate and pad with leading zeros if needed
+                var validatedComponents: [String] = []
+                for component in components {
+                    guard component.count >= 1 && component.count <= 2,
+                        component.rangeOfCharacter(
+                            from: CharacterSet(charactersIn: "0123456789abcdef").inverted) == nil
+                    else {
+                        throw ValidationError("Invalid MAC address format: \(address)")
+                    }
+                    validatedComponents.append(component.count == 1 ? "0" + component : component)
+                }
+                hexComponents = validatedComponents
+            } else {
                 throw ValidationError("Invalid MAC address format: \(address)")
             }
 
-            // Format as MAC address with colons
-            return String(
-                cleaned.enumerated().map { $0 > 0 && $0 % 2 == 0 ? [":", $1] : [$1] }.joined())
+            // Format as standard MAC address with colons and uppercase
+            return hexComponents.map { $0.uppercased() }.joined(separator: ":")
         })
     var macAddresses: [String]
 

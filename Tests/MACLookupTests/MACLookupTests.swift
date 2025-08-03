@@ -46,12 +46,27 @@ struct MACAddressTests {
             "00-11-22-33-44-55",
             "00.11.22.33.44.55",
             "0011.2233.4455",
+            "8:b6:1f:d0:f5:d8",  // Missing leading zeros
+            "a:b:c:d:e:f",  // Single digit hex values
+            "1:2:3:4:5:6",  // All single digits
         ]
 
         for macString in macStrings {
             let mac = try #require(try? MACAddress(string: macString))
-            #expect(mac.description == "00:11:22:33:44:55")
-            #expect(mac.oui == "001122")
+            switch macString {
+            case "8:b6:1f:d0:f5:d8":
+                #expect(mac.description == "08:B6:1F:D0:F5:D8")
+                #expect(mac.oui == "08B61F")
+            case "a:b:c:d:e:f":
+                #expect(mac.description == "0A:0B:0C:0D:0E:0F")
+                #expect(mac.oui == "0A0B0C")
+            case "1:2:3:4:5:6":
+                #expect(mac.description == "01:02:03:04:05:06")
+                #expect(mac.oui == "010203")
+            default:
+                #expect(mac.description == "00:11:22:33:44:55")
+                #expect(mac.oui == "001122")
+            }
         }
     }
 

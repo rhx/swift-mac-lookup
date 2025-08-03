@@ -82,6 +82,7 @@ hwaddrlookup --local 00:11:22:33:44:55
 - `00.11.22.33.44.55` (dot-separated)
 - `0011.2233.4455` (Cisco format)
 - `001122334455` (no separators)
+- `8:b6:1f:0:f5:d8` (missing leading zeros)
 
 ## API Overview
 
