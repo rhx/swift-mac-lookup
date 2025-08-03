@@ -501,7 +501,7 @@ public struct MACVendorInfo: Codable, Sendable {
 /// - `databaseError`: Check file permissions and storage availability
 /// - `apiError`: Review API response and possibly update parsing logic
 /// - `invalidConfiguration`: Verify configuration file format and content
-public enum MACLookupError: Error, LocalizedError, Sendable {
+public enum MACLookupError: Error, Sendable {
     /// The provided string is not a valid MAC address format.
     ///
     /// Thrown when a string cannot be parsed as a MAC address due to
@@ -550,7 +550,7 @@ public enum MACLookupError: Error, LocalizedError, Sendable {
     /// This typically indicates file format issues or missing required fields.
     case invalidConfiguration(String)
 
-    /// Provides a localised description of the error for user presentation.
+    /// Provides a description of the error for user presentation.
     ///
     /// Returns a human-readable error message that describes the specific
     /// failure condition. The messages are designed to be helpful for both
@@ -559,6 +559,9 @@ public enum MACLookupError: Error, LocalizedError, Sendable {
     ///
     /// Each error case includes relevant details such as the invalid input
     /// or the underlying system error to aid in debugging and user feedback.
+    ///
+    /// - Note: This property returns localised error descriptions for
+    ///         underlying system errors only, provided they offer localisation.
     public var errorDescription: String? {
         switch self {
         case .invalidMACAddress(let address):
