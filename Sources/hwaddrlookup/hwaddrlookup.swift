@@ -2,31 +2,113 @@ import ArgumentParser
 import Foundation
 import MACLookup
 
-@available(macOS 12.0, *)
+/// Actor responsible for managing cache file operations for the command-line tool.
+///
+/// `FileCacheManager` provides thread-safe access to cache file operations including
+/// directory management, file existence checks, and cache validation logic. The actor
+/// pattern ensures safe concurrent access to file system operations.
+///
+/// ## Cache Location
+///
+/// The cache is stored in the user's standard cache directory under a subdirectory
+/// specific to this application. The location varies by platform:
+/// - **macOS**: `~/Library/Caches/com.github.rhx.maclookup/`
+/// - **Linux**: `~/.cache/com.github.rhx.maclookup/`
+///
+/// ## Thread Safety
+///
+/// All file operations are actor-isolated to prevent race conditions when multiple
+/// operations attempt to access the cache simultaneously.
 actor FileCacheManager {
+    /// Shared singleton instance for cache management.
+    ///
+    /// Provides a single point of access for cache operations throughout the
+    /// command-line tool to ensure consistent behaviour and avoid duplicate
+    /// directory creation or file conflicts.
     static let shared = FileCacheManager()
+
+    /// File manager instance for performing file system operations.
+    ///
+    /// Private instance used for all file system interactions including
+    /// directory creation, file existence checks, and attribute reading.
     private let fileManager = FileManager.default
+
+    /// Name of the cache file for storing MAC vendor data.
+    ///
+    /// Fixed filename used consistently across all cache operations to
+    /// store the downloaded and parsed IEEE OUI database.
     private let cacheFileName = "mac-vendors.json"
 
+    /// The directory path where cache files are stored.
+    ///
+    /// Computed property that returns the application-specific cache directory
+    /// within the user's standard cache location. The directory is created
+    /// automatically when needed.
     private var cacheDirectory: URL {
         fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("com.github.rhx.maclookup")
     }
 
+    /// Returns the full URL path for the cache file.
+    ///
+    /// Constructs the complete file URL by combining the cache directory
+    /// path with the standard cache filename. This provides a consistent
+    /// location for the MAC vendor database cache.
+    ///
+    /// - Returns: The URL where the cache file should be stored.
     func getCacheFileURL() -> URL {
         cacheDirectory.appendingPathComponent(cacheFileName)
     }
 
+    /// Ensures the cache directory exists, creating it if necessary.
+    ///
+    /// Creates the cache directory structure if it doesn't already exist.
+    /// Uses `withIntermediateDirectories: true` to create any missing
+    /// parent directories in the path.
+    ///
+    /// This method is called before any cache operations to ensure the
+    /// directory structure is properly set up.
+    ///
+    /// - Throws: File system errors if directory creation fails.
     func ensureCacheDirectory() throws {
         if !fileManager.fileExists(atPath: cacheDirectory.path) {
             try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         }
     }
 
+    /// Checks whether a file exists at the specified URL.
+    ///
+    /// Simple wrapper around FileManager's existence check that provides
+    /// a clean interface for cache validation operations.
+    ///
+    /// - Parameter url: The file URL to check for existence.
+    /// - Returns: `true` if the file exists, `false` otherwise.
     func fileExists(at url: URL) -> Bool {
         fileManager.fileExists(atPath: url.path)
     }
 
+    /// Determines whether the cache should be updated based on various conditions.
+    ///
+    /// Implements the logic for deciding when to download a fresh copy of the
+    /// IEEE database. The decision considers user preferences, cache existence,
+    /// and operational mode. When debug mode is enabled, detailed information
+    /// about the decision process is printed.
+    ///
+    /// ## Decision Logic
+    ///
+    /// - If `forceUpdate` is true, always update (unless local-only mode)
+    /// - If cache doesn't exist and `localOnly` is true, don't update
+    /// - If cache doesn't exist and online mode, update
+    /// - If cache exists, use existing cache
+    ///
+    /// Debug output includes cache file location, existence, size, age, and
+    /// decision rationale for troubleshooting purposes.
+    ///
+    /// - Parameters:
+    ///   - forceUpdate: Whether to force an update regardless of cache state.
+    ///   - localOnly: Whether to operate in offline mode only.
+    ///   - debug: Whether to print debug information. Defaults to `false`.
+    /// - Returns: A tuple containing whether to update and whether cache exists.
     func shouldUpdateCache(forceUpdate: Bool, localOnly: Bool, debug: Bool = false) async -> (
         shouldUpdate: Bool, cacheExists: Bool
     ) {
@@ -70,7 +152,29 @@ actor FileCacheManager {
     }
 }
 
-@available(macOS 12.0, *)
+/// Command-line interface for MAC address vendor lookups.
+///
+/// `HWAddrLookup` provides a terminal-based interface to the MACLookup library,
+/// supporting both single and batch MAC address processing. The tool maintains
+/// a local cache of the IEEE OUI database for fast offline operation whilst
+/// providing options for online updates when needed.
+///
+/// ## Usage Patterns
+///
+/// The tool supports several common usage patterns:
+/// - Single address lookup with automatic cache management
+/// - Batch processing of multiple addresses
+/// - Offline operation using cached data only
+/// - Forced database updates for current information
+/// - Debug mode for troubleshooting and diagnostics
+///
+/// ## Cache Management
+///
+/// The tool automatically manages a local cache of vendor information:
+/// - Downloads database on first use if not present
+/// - Uses cached data for fast subsequent lookups
+/// - Provides options to force updates or operate offline only
+/// - Stores cache in platform-appropriate user directories
 @main
 struct HWAddrLookup: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -82,15 +186,45 @@ struct HWAddrLookup: AsyncParsableCommand {
             """
     )
 
+    /// Forces an update of the local database before performing lookups.
+    ///
+    /// When enabled, the tool downloads the latest IEEE OUI database before
+    /// processing any MAC addresses. This ensures the most current vendor
+    /// information but requires network access and additional time.
     @Flag(name: .shortAndLong, help: "Update the local cache before looking up addresses")
     var update = false
 
+    /// Restricts operation to local cache only, preventing network access.
+    ///
+    /// When enabled, the tool will only use the locally cached database and
+    /// will fail if no cache is available. This is useful for offline environments
+    /// or when consistent results are required.
     @Flag(name: .shortAndLong, help: "Only use local cache, fail if not available")
     var local = false
 
+    /// Enables detailed debug output for troubleshooting and diagnostics.
+    ///
+    /// When enabled, the tool prints detailed information about cache operations,
+    /// file locations, lookup timing, and error details. This is useful for
+    /// troubleshooting issues or understanding the tool's behaviour.
     @Flag(name: .shortAndLong, help: "Enable debug output for troubleshooting")
     var debug = false
 
+    /// MAC addresses to look up, accepting various common formats.
+    ///
+    /// The argument accepts one or more MAC addresses in any of the commonly
+    /// used formats and automatically normalises them to a standard colon-separated
+    /// format for processing. Invalid formats will cause the command to fail with
+    /// a clear error message.
+    ///
+    /// The transformation process:
+    /// 1. Removes all non-hexadecimal characters using regex
+    /// 2. Validates the result contains exactly 12 hex digits
+    /// 3. Converts to uppercase for consistency
+    /// 4. Formats with colons for standard presentation
+    ///
+    /// Supported input formats include colon, hyphen, dot, and Cisco notation
+    /// as well as raw hexadecimal strings.
     @Argument(
         help: "One or more MAC addresses to look up (e.g., 00:11:22:33:44:55)",
         transform: { address in
@@ -113,6 +247,27 @@ struct HWAddrLookup: AsyncParsableCommand {
         })
     var macAddresses: [String]
 
+    /// Executes the main command logic for MAC address lookups.
+    ///
+    /// This method orchestrates the complete lookup process including cache
+    /// management, database updates, and individual address processing. The
+    /// execution flow adapts based on the provided command-line flags to
+    /// support various operational modes.
+    ///
+    /// ## Execution Flow
+    ///
+    /// 1. Sets up cache directory structure
+    /// 2. Determines if database update is needed based on flags and cache state
+    /// 3. Updates or loads the local database as appropriate
+    /// 4. Processes each MAC address with appropriate lookup strategy
+    /// 5. Outputs results in a consistent format with error handling
+    ///
+    /// The method handles both single and batch address processing whilst
+    /// providing detailed error messages and optional debug output.
+    ///
+    /// - Throws: `CleanExit.message` for user-facing error conditions.
+    /// - Throws: `MACLookupError` for lookup-specific failures.
+    /// - Throws: File system or network errors from underlying operations.
     func run() async throws {
         let fileManager = FileCacheManager.shared
         try await fileManager.ensureCacheDirectory()

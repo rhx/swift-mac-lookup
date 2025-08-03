@@ -1,11 +1,44 @@
 import Foundation
 
 /// A parser for the IEEE OUI text format.
+///
+/// `OUIParser` handles the parsing of IEEE OUI database text files into structured
+/// data suitable for MAC address vendor lookups. The parser is designed to handle
+/// the specific format used by the IEEE Registration Authority whilst being robust
+/// against formatting variations.
+///
+/// ## Input Format
+///
+/// The IEEE OUI database uses a specific text format with entries like:
+/// ```
+/// 00-00-0C   (hex)    Cisco Systems, Inc
+///                     170 West Tasman Drive
+///                     San Jose CA 95134
+///                     US
+/// ```
+///
+/// ## Parser Behaviour
+///
+/// The parser processes the text line by line, identifying OUI entries by their
+/// hex format and handling multi-line vendor information correctly.
 struct OUIParser {
-    /// Parses the OUI text data into a dictionary of MAC address prefixes to vendor information.
-    /// - Parameter data: The OUI text data to parse.
-    /// - Returns: A dictionary mapping MAC address prefixes to vendor information.
-    /// - Throws: An error if the data cannot be parsed.
+    /// Parses IEEE OUI text data into a structured format.
+    ///
+    /// Processes the IEEE OUI database text format and extracts vendor information
+    /// for each registered MAC address prefix. The parser handles the multi-line
+    /// format where vendor names may span multiple lines and filters out comments
+    /// and empty lines.
+    ///
+    /// The parsing process:
+    /// 1. Decodes the data as UTF-8 text
+    /// 2. Processes each line to identify OUI entries
+    /// 3. Extracts MAC prefixes in hex format (e.g., "00-11-22")
+    /// 4. Collects associated vendor names, including multi-line entries
+    /// 5. Returns a dictionary mapping normalised OUI strings to vendor names
+    ///
+    /// - Parameter data: The IEEE OUI database text data to parse.
+    /// - Returns: A dictionary mapping 6-character hex OUI strings to vendor names.
+    /// - Throws: `MACLookupError.apiError` if the data cannot be decoded as UTF-8.
     static func parse(_ data: Data) throws -> [String: String] {
         guard let text = String(data: data, encoding: .utf8) else {
             throw MACLookupError.apiError("Failed to decode OUI data as UTF-8")
@@ -63,8 +96,16 @@ struct OUIParser {
 
 extension MACVendorInfo {
     /// Creates a new `MACVendorInfo` instance from a vendor name.
-    /// - Parameter vendorName: The name of the vendor.
-    /// - Returns: A new `MACVendorInfo` instance.
+    ///
+    /// Convenience factory method for creating vendor information records when
+    /// only the vendor name is available from the parsed OUI data. Other fields
+    /// are populated with appropriate defaults.
+    ///
+    /// This method is primarily used internally by the OUI parser to create
+    /// vendor records from the IEEE database text format.
+    ///
+    /// - Parameter vendorName: The name of the vendor organisation.
+    /// - Returns: A new `MACVendorInfo` instance with default values for optional fields.
     static func from(vendorName: String) -> MACVendorInfo {
         return MACVendorInfo(
             prefix: "",
