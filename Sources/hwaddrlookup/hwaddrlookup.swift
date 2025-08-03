@@ -209,6 +209,14 @@ struct HWAddrLookup: AsyncParsableCommand {
     @Flag(name: .shortAndLong, help: "Enable debug output for troubleshooting")
     var debug = false
 
+    /// Enables terse output that shows only the company name.
+    ///
+    /// When enabled, the tool outputs only the company name without the MAC address,
+    /// company address, or other formatting. This is useful for scripting or when
+    /// only the vendor name is needed.
+    @Flag(name: .shortAndLong, help: "Show only company name in terse format")
+    var terse = false
+
     /// MAC addresses to look up, accepting various common formats.
     ///
     /// The argument accepts one or more MAC addresses in any of the commonly
@@ -369,17 +377,34 @@ struct HWAddrLookup: AsyncParsableCommand {
                     // Use normal lookup with fallback to online
                     vendorInfo = try await lookup.lookup(mac)
                 }
-                print("\(mac): \(vendorInfo.companyName)")
-                if !vendorInfo.companyAddress.isEmpty {
-                    print("   \(vendorInfo.companyAddress)")
+
+                if terse {
+                    print("\(vendorInfo.companyName)")
+                } else {
+                    print("\(mac): \(vendorInfo.companyName)")
+                    if !vendorInfo.companyAddress.isEmpty {
+                        print("   \(vendorInfo.companyAddress)")
+                    }
                 }
 
             } catch MACLookupError.notFound {
-                fputs("\(mac): Vendor not found\n", stderr)
+                if terse {
+                    fputs("Vendor not found\n", stderr)
+                } else {
+                    fputs("\(mac): Vendor not found\n", stderr)
+                }
             } catch MACLookupError.locallyAdministered {
-                fputs("\(mac): Locally administered (no vendor information)\n", stderr)
+                if terse {
+                    fputs("Locally administered (no vendor information)\n", stderr)
+                } else {
+                    fputs("\(mac): Locally administered (no vendor information)\n", stderr)
+                }
             } catch {
-                fputs("\(mac): Error - \(error.localizedDescription)\n", stderr)
+                if terse {
+                    fputs("Error - \(error.localizedDescription)\n", stderr)
+                } else {
+                    fputs("\(mac): Error - \(error.localizedDescription)\n", stderr)
+                }
             }
         }
     }

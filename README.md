@@ -73,6 +73,12 @@ hwaddrlookup --update 00:11:22:33:44:55
 
 # Local-only mode
 hwaddrlookup --local 00:11:22:33:44:55
+
+# Terse output (company name only)
+hwaddrlookup --terse 00:11:22:33:44:55
+
+# Multiple options
+hwaddrlookup --terse --local 8:b6:1f:d0:f5:d8
 ```
 
 ## Supported MAC Address Formats

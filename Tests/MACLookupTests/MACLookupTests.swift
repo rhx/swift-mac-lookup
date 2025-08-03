@@ -237,9 +237,9 @@ struct MACLookupTests {
         // Test looking up a MAC address from the updated database
         let localVendor = try await lookup.lookup("00:11:22:33:44:55")
 
-        // The OUIParser includes everything after the OUI in the vendor name
-        // The MACVendorInfo.from(vendorName:) method uses this as the company name
-        let expectedVendorName = "(hex) First"
+        // The OUIParser now cleans up vendor names by removing format artifacts
+        // The MACVendorInfo.from(vendorName:) method uses the cleaned name as the company name
+        let expectedVendorName = "First"
         #expect(localVendor.companyName == expectedVendorName)
         #expect(localVendor.companyAddress.isEmpty)  // Address is empty in MACVendorInfo.from(vendorName:)
         #expect(localVendor.countryCode.isEmpty)  // Country code is empty in MACVendorInfo.from(vendorName:)
@@ -338,6 +338,37 @@ struct MACLookupTests {
 
         // Clean up
         try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    @Test("OUI parser vendor name cleaning")
+    func testOUIParserCleaning() throws {
+        // Test OUI data with format artifacts that should be cleaned
+        let testOUIData = """
+            # Sample OUI data for testing
+            08-B6-1F   (hex)		Espressif Inc. 08B61F     (base 16)		Espressif Inc.
+            				Room 204, Building 2, 690 Bibo Rd, Pudong New Area
+            				Shanghai  Shanghai  201203
+            				CN
+
+            00-11-22   (hex)		Test Company Inc. 001122     (base 16)		Test Company Inc.
+            				123 Test Street
+            				Test City  Test State  12345
+            				US
+            """.data(using: .utf8)!
+
+        // Parse the OUI data
+        let parsedData = try OUIParser.parse(testOUIData)
+
+        // Verify that format artifacts are removed
+        #expect(parsedData["08B61F"] == "Espressif Inc.")
+        #expect(parsedData["001122"] == "Test Company Inc.")
+
+        // Verify that vendor info creation uses cleaned names
+        let espressifInfo = MACVendorInfo.from(vendorName: parsedData["08B61F"]!)
+        let testCompanyInfo = MACVendorInfo.from(vendorName: parsedData["001122"]!)
+
+        #expect(espressifInfo.companyName == "Espressif Inc.")
+        #expect(testCompanyInfo.companyName == "Test Company Inc.")
     }
 
     // MARK: - Test Lifecycle
